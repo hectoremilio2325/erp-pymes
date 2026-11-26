@@ -113,9 +113,9 @@ function mostrarAcceso(empresa) {
   $('#app').className = '';
   $('#app').innerHTML = `
     <main class="acceso">
+      <div class="acceso-empresa">${esc(empresa || (estado.yo && estado.yo.empresa) || 'ERP PyMES')}</div>
       <form class="tarjeta" id="f-login">
         <h1>Iniciar sesión</h1>
-        <p>${esc(empresa || (estado.yo && estado.yo.empresa) || 'ERP PyMES')}</p>
         <div class="campo"><label for="l-u">Usuario</label><input id="l-u" name="username" autocomplete="username" required></div>
         <div class="campo"><label for="l-p">Contraseña</label><input id="l-p" name="password" type="password" autocomplete="current-password" required></div>
         <div class="error"></div>

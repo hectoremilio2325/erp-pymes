@@ -1,0 +1,19 @@
+{
+  "name": "erp-pymes",
+  "version": "0.1.0",
+  "description": "ERP de control interno para PyMES",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "express": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "private": true
+}

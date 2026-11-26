@@ -4,9 +4,9 @@
   --texto: #1f2937;
   --suave: #6b7280;
   --borde: #e5e7eb;
-  --primario: #1d4ed8;
-  --primario-hover: #1e40af;
-  --lateral: #0f172a;
+  --primario: #b0102f;
+  --primario-hover: #8e0c26;
+  --lateral: #2b0710;
   --ok: #15803d;
   --alerta: #b45309;
   --peligro: #b91c1c;
@@ -22,13 +22,13 @@ h2 { font-size: 1.1rem; margin: 0 0 .75rem; }
 
 /* Estructura */
 .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100vh; }
-.lateral { background: var(--lateral); color: #e2e8f0; padding: 1.25rem .75rem; display: flex; flex-direction: column; gap: .25rem; }
+.lateral { background: var(--lateral); color: #f5e6e9; padding: 1.25rem .75rem; display: flex; flex-direction: column; gap: .25rem; }
 .lateral .marca { font-weight: 700; font-size: 1.05rem; padding: 0 .75rem 1rem; color: #fff; }
-.lateral .marca small { display: block; font-weight: 400; color: #94a3b8; font-size: .8rem; margin-top: .2rem; }
-.lateral a { color: #cbd5e1; text-decoration: none; padding: .6rem .75rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
-.lateral a:hover { background: #1e293b; color: #fff; }
+.lateral .marca small { display: block; font-weight: 400; color: #d4a5ae; font-size: .8rem; margin-top: .2rem; }
+.lateral a { color: #ecd3d8; text-decoration: none; padding: .6rem .75rem; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+.lateral a:hover { background: #4a0d1c; color: #fff; }
 .lateral a.activo { background: var(--primario); color: #fff; }
-.lateral .pie { margin-top: auto; padding: .75rem; font-size: .85rem; color: #94a3b8; border-top: 1px solid #1e293b; }
+.lateral .pie { margin-top: auto; padding: .75rem; font-size: .85rem; color: #d4a5ae; border-top: 1px solid #4a0d1c; }
 .lateral .pie strong { color: #e2e8f0; display: block; }
 .lateral .pie button { margin-top: .6rem; width: 100%; }
 .contenido { padding: 1.75rem 2rem; max-width: 1200px; width: 100%; }
@@ -63,7 +63,7 @@ button.primario:hover { background: var(--primario-hover); }
 button.peligro { color: var(--peligro); border-color: #fecaca; }
 button.ok { color: var(--ok); border-color: #bbf7d0; }
 button.chico { padding: .3rem .6rem; font-size: .85rem; }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #93c5fd; outline-offset: 1px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #f4a3b2; outline-offset: 1px; }
 
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: .6rem .5rem; border-bottom: 1px solid var(--borde); vertical-align: top; }
@@ -74,7 +74,7 @@ tr.hecha td { color: var(--suave); }
 tr.hecha .titulo { text-decoration: line-through; }
 .tabla-scroll { overflow-x: auto; }
 
-.etiqueta-chip { display: inline-block; font-size: .78rem; padding: .12rem .5rem; border-radius: 999px; background: #eef2ff; color: #3730a3; white-space: nowrap; }
+.etiqueta-chip { display: inline-block; font-size: .78rem; padding: .12rem .5rem; border-radius: 999px; background: #fde8ec; color: #8e0c26; white-space: nowrap; }
 .chip-alta { background: #fee2e2; color: #991b1b; }
 .chip-media { background: #fef3c7; color: #92400e; }
 .chip-baja { background: #dcfce7; color: #166534; }
@@ -116,7 +116,7 @@ textarea { min-height: 80px; resize: vertical; }
 
 /* Modal */
 dialog { border: none; border-radius: 12px; padding: 0; width: min(620px, 95vw); box-shadow: 0 20px 50px rgba(0,0,0,.25); }
-dialog::backdrop { background: rgba(15, 23, 42, .5); }
+dialog::backdrop { background: rgba(43, 7, 16, .5); }
 #modal-contenido { padding: 1.5rem; max-height: 85vh; overflow: auto; }
 .historial { list-style: none; padding: 0; margin: 0; font-size: .88rem; }
 .historial li { padding: .45rem 0; border-bottom: 1px dashed var(--borde); }

@@ -194,7 +194,13 @@ const db = {
     return async (req, res, next) => {
       if (modo() !== 'sheets') { await conexion().listo; return next(); }
       apiSheets ||= sheets.crearApi(apiSheetsOpciones);
-      const ctx = await sheets.cargar(apiSheets, ESQUEMA);
+      let ctx;
+      try {
+        ctx = await sheets.cargar(apiSheets, ESQUEMA);
+      } catch (e) {
+        console.error(e);
+        throw Object.assign(new Error(`No se pudo leer el archivo de Google Sheets. ${e.message}`), { status: 503, expose: true });
+      }
       res.locals.dbctx = ctx;
       const json = res.json.bind(res);
       res.json = (cuerpo) => {

@@ -498,7 +498,7 @@ app.get('/{*ruta}', (_req, res) => res.sendFile(path.join(publico, 'index.html')
 app.use((err, _req, res, _next) => {
   // Si la solicitud falló a medias, no se guarda nada en Google Sheets
   if (res.locals.dbctx) res.locals.dbctx.abortado = true;
-  if (err.status && err.status < 500) return bad(res, err.type === 'entity.parse.failed' ? 'Solicitud no válida.' : err.message, err.status);
+  if (err.status && (err.status < 500 || err.expose)) return bad(res, err.type === 'entity.parse.failed' ? 'Solicitud no válida.' : err.message, err.status);
   console.error(err);
   bad(res, 'Ocurrió un error en el servidor.', 500);
 });

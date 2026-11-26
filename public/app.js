@@ -93,7 +93,9 @@ const RUTAS = {
 
 async function iniciar() {
   try {
-    const s = await (await fetch('/api/setup')).json();
+    const r0 = await fetch('/api/setup');
+    const s = await r0.json();
+    if (!r0.ok) { $('#app').textContent = s.error || 'No se pudo conectar con el servidor.'; return; }
     if (s.necesario) return mostrarConfiguracionInicial();
     const r = await fetch('/api/me', { credentials: 'same-origin' });
     if (!r.ok) return mostrarAcceso(s.empresa);

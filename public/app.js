@@ -15,7 +15,8 @@ const ESTADO_TAREA = { pendiente: 'Pendiente', en_progreso: 'En progreso', compl
 const TIPO_EVENTO = { actividad: 'Actividad', reunion: 'Reunión', entrega: 'Fecha de entrega', festivo: 'Día festivo', vacaciones: 'Vacaciones', otro: 'Otro' };
 const TIPO_INC = { home_office: 'Home Office', permiso: 'Permiso', ausencia: 'Ausencia', vacaciones: 'Vacaciones', retardo: 'Retardo', otra: 'Otra incidencia' };
 const ESTADO_INC = { pendiente: 'Pendiente', aprobada: 'Aprobada', rechazada: 'Rechazada', cancelada: 'Cancelada' };
-const fmtHoras = (n) => `${Number(n || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} h`;
+// Tiempo en formato horas.minutos (1.30 = 1 hora 30 minutos)
+const fmtHoras = (n) => `${Number(n || 0).toFixed(2)} h`;
 const chip = (clase, texto) => `<span class="etiqueta-chip chip-${esc(clase)}">${esc(texto)}</span>`;
 const opciones = (mapa, sel) => Object.entries(mapa).map(([k, v]) => `<option value="${esc(k)}"${k === sel ? ' selected' : ''}>${esc(v)}</option>`).join('');
 
@@ -342,9 +343,10 @@ async function abrirTarea(id, alCambiar) {
     ${puedeEstado ? `
     <form id="f-horas" class="form-horas">
       <div class="campo"><label for="h-fe">Fecha</label><input id="h-fe" type="date" name="fecha" value="${hoyISO()}" max="${hoyISO()}" required></div>
-      <div class="campo"><label for="h-ho">Horas</label><input id="h-ho" name="horas" type="number" min="0.25" max="24" step="0.25" placeholder="1.5" required></div>
+      <div class="campo"><label for="h-ho">Horas</label><input id="h-ho" name="horas" inputmode="decimal" pattern="\\d{1,2}([.,][0-5]?\\d)?" maxlength="5" placeholder="1.30" required title="Horas.minutos, de 0.01 a 99.59"></div>
       <div class="campo"><label for="h-no">¿Qué hiciste? (opcional)</label><input id="h-no" name="nota" maxlength="300"></div>
       <button class="primario" type="submit">Registrar</button>
+      <span class="ayuda">Formato horas.minutos: 0.45 = 45 minutos, 1.30 = 1 hora 30 minutos (máximo 99.59).</span>
       <div class="error"></div>
     </form>` : ''}
     ${t.horas.length ? `<table class="tabla-horas"><tbody>${t.horas.map((h) => `
@@ -378,8 +380,7 @@ async function vistaBitacora(v) {
   const f = vistaBitacora.filtros ||= { desde: '', hasta: '', usuario: '' };
   const qs = new URLSearchParams(Object.entries(f).filter(([, x]) => x)).toString();
   const b = await api('/api/bitacora?' + qs);
-  const semanas = Math.max(1, b.por_semana.length);
-  const maxSem = Math.max(1, ...b.por_semana.map((s) => s.horas));
+  const maxSem = Math.max(1, ...b.por_semana.map((s) => s.minutos));
   v.innerHTML = `
     <div class="encabezado"><h1>Bitácora de horas</h1></div>
     <div class="filtros">
@@ -390,14 +391,14 @@ async function vistaBitacora(v) {
     <div class="cifras">
       <div class="cifra"><div class="valor">${fmtHoras(b.esta_semana)}</div><div class="etiqueta">Esta semana</div></div>
       <div class="cifra"><div class="valor">${fmtHoras(b.total)}</div><div class="etiqueta">Total del periodo</div></div>
-      <div class="cifra"><div class="valor">${fmtHoras(b.total / semanas)}</div><div class="etiqueta">Promedio por semana trabajada</div></div>
+      <div class="cifra"><div class="valor">${fmtHoras(b.promedio_semana)}</div><div class="etiqueta">Promedio por semana trabajada</div></div>
       <div class="cifra"><div class="valor">${b.entradas.length}</div><div class="etiqueta">Registros</div></div>
     </div>
     <div class="columnas">
       <div class="tarjeta tabla-scroll"><h2>Horas por semana</h2>
         ${b.por_semana.length ? `<table><thead><tr><th>Semana</th><th>Horas</th><th></th></tr></thead><tbody>${b.por_semana.map((s) => `
           <tr><td>${fmtFecha(s.inicio)} – ${fmtFecha(s.fin)}</td><td><strong>${fmtHoras(s.horas)}</strong></td>
-          <td class="celda-barra"><meter min="0" max="${maxSem}" value="${s.horas}"></meter></td></tr>`).join('')}</tbody></table>`
+          <td class="celda-barra"><meter min="0" max="${maxSem}" value="${s.minutos}"></meter></td></tr>`).join('')}</tbody></table>`
     : '<p class="vacio">Sin horas registradas en este periodo.</p>'}
       </div>
       ${esAdmin() && !f.usuario ? `<div class="tarjeta tabla-scroll"><h2>Horas por persona</h2>

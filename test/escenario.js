@@ -88,27 +88,35 @@ async function escenario(base, hashDe) {
 
   // Registro de horas y bitácora
   const hoyT = new Date().toISOString().slice(0, 10);
-  assert.equal((await ana('POST', `/api/tasks/${t1}/horas`, { horas: '1,5', nota: 'Borrador' })).status, 200);
+  // Formato horas.minutos: 0.45 + 0.45 = 1.30
+  assert.equal((await ana('POST', `/api/tasks/${t1}/horas`, { horas: '0,45', nota: 'Borrador' })).status, 200);
+  assert.equal((await ana('POST', `/api/tasks/${t1}/horas`, { horas: 0.45 })).status, 200);
   assert.equal((await luis('POST', `/api/tasks/${t1}/horas`, { horas: 2, fecha: hoyT })).status, 200);
-  assert.equal((await ana('POST', `/api/tasks/${t1}/horas`, { horas: 0 })).status, 400);
-  assert.equal((await ana('POST', `/api/tasks/${t1}/horas`, { horas: 30 })).status, 400);
+  for (const mal of [0, '0.00', '1.60', '100', '1.234', 'abc', -1]) {
+    assert.equal((await ana('POST', `/api/tasks/${t1}/horas`, { horas: mal })).status, 400, `rechaza ${mal}`);
+  }
+  assert.equal((await ana('POST', `/api/tasks/${t1}/horas`, { horas: '99.59' })).status, 200);
+  assert.equal((await ana('POST', `/api/tasks/${t1}/horas`, { horas: '0.01' })).status, 200);
+  const extra = (await ana('GET', `/api/tasks/${t1}`)).data.horas.filter((x) => x.horas === 99.59 || x.horas === 0.01);
+  assert.equal(extra.length, 2);
+  for (const x of extra) assert.equal((await ana('DELETE', `/api/horas/${x.id}`)).status, 200);
   assert.equal((await ana('POST', `/api/tasks/${t2}/horas`, { horas: 1 })).status, 404, 'no registra en pendientes ajenos');
   assert.equal((await luis('POST', `/api/tasks/${t2}/horas`, { horas: 0.5 })).status, 200);
   const conHoras = (await admin('GET', `/api/tasks/${t1}`)).data;
-  assert.equal(conHoras.horas_total, 3.5); assert.equal(conHoras.horas.length, 2);
-  assert.equal((await admin('GET', '/api/tasks')).data.find((x) => x.id === t1).horas_total, 3.5);
+  assert.equal(conHoras.horas_total, 3.3); assert.equal(conHoras.horas.length, 3);
+  assert.equal((await admin('GET', '/api/tasks')).data.find((x) => x.id === t1).horas_total, 3.3);
   const bitAna = (await ana('GET', '/api/bitacora')).data;
-  assert.equal(bitAna.total, 1.5); assert.equal(bitAna.esta_semana, 1.5); assert.equal(bitAna.entradas.length, 1);
+  assert.equal(bitAna.total, 1.3); assert.equal(bitAna.esta_semana, 1.3); assert.equal(bitAna.entradas.length, 2);
   const bitLuis = (await luis('GET', '/api/bitacora')).data;
   assert.equal(bitLuis.total, 2.5, 'Luis ve sus horas en tareas y pendientes');
   const bitAdmin = (await admin('GET', '/api/bitacora')).data;
-  assert.equal(bitAdmin.total, 3.5, 'admin no ve horas de pendientes personales ajenos');
+  assert.equal(bitAdmin.total, 3.3, 'admin no ve horas de pendientes personales ajenos');
   assert.equal(bitAdmin.por_persona.length, 2); assert.equal(bitAdmin.por_semana.length, 1);
-  assert.equal((await admin('GET', `/api/bitacora?usuario=${a.data.id}`)).data.total, 1.5);
+  assert.equal((await admin('GET', `/api/bitacora?usuario=${a.data.id}`)).data.total, 1.3);
   const horaLuis = conHoras.horas.find((x) => x.horas === 2).id;
   assert.equal((await ana('DELETE', `/api/horas/${horaLuis}`)).status, 403);
   assert.equal((await luis('DELETE', `/api/horas/${horaLuis}`)).status, 200);
-  assert.equal((await admin('GET', `/api/tasks/${t1}`)).data.horas_total, 1.5);
+  assert.equal((await admin('GET', `/api/tasks/${t1}`)).data.horas_total, 1.3);
 
   // Panel
   const dash = (await ana('GET', '/api/dashboard')).data;

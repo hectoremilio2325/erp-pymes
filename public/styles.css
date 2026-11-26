@@ -154,7 +154,7 @@ a.cifra:hover { border-color: var(--primario); }
 .acceso button + button { margin-top: .5rem; width: 100%; }
 .form-horas { display: grid; grid-template-columns: 150px 100px 1fr auto; gap: .6rem; align-items: end; margin-bottom: .75rem; }
 .form-horas .campo { margin-bottom: 0; }
-.form-horas .error { grid-column: 1 / -1; }
+.form-horas .error, .form-horas .ayuda { grid-column: 1 / -1; }
 @media (max-width: 600px) { .form-horas { grid-template-columns: 1fr 1fr; } }
 .tabla-horas { margin-bottom: 1rem; font-size: .9rem; }
 .celda-barra { width: 40%; }

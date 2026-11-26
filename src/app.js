@@ -218,13 +218,16 @@ app.get('/api/tasks', auth.requireAuth, async (req, res) => {
     cond.push('EXISTS (SELECT 1 FROM task_assignees a WHERE a.task_id = t.id AND a.user_id = ?)');
     params.push(Number(q.responsable));
   }
-  res.json(await db.all(`SELECT t.*, u.nombre AS creado_por_nombre,
+  const lista = await db.all(`SELECT t.*, u.nombre AS creado_por_nombre,
       (SELECT group_concat(us.nombre, ', ') FROM task_assignees a JOIN users us ON us.id = a.user_id WHERE a.task_id = t.id) AS responsables,
-      (SELECT ROUND(COALESCE(SUM(h.horas), 0), 2) FROM time_logs h WHERE h.task_id = t.id) AS horas_total
+      (SELECT COALESCE(SUM(CAST(h.horas AS INTEGER) * 60 + ROUND((h.horas - CAST(h.horas AS INTEGER)) * 100)), 0)
+        FROM time_logs h WHERE h.task_id = t.id) AS minutos_total
     FROM tasks t JOIN users u ON u.id = t.creado_por
     WHERE ${cond.join(' AND ')}
     ORDER BY (t.estado = 'completada'), CASE WHEN t.fecha_limite = '' THEN 1 ELSE 0 END, t.fecha_limite,
-      CASE t.prioridad WHEN 'alta' THEN 0 WHEN 'media' THEN 1 ELSE 2 END, t.id DESC`, ...params));
+      CASE t.prioridad WHEN 'alta' THEN 0 WHEN 'media' THEN 1 ELSE 2 END, t.id DESC`, ...params);
+  for (const t of lista) { t.horas_total = deMinutos(Number(t.minutos_total)); delete t.minutos_total; }
+  res.json(lista);
 });
 
 app.get('/api/tasks/:id', auth.requireAuth, async (req, res) => {
@@ -234,7 +237,7 @@ app.get('/api/tasks/:id', auth.requireAuth, async (req, res) => {
     WHERE h.task_id = ? ORDER BY h.id DESC`, t.id);
   t.horas = await db.all(`SELECT h.id, h.user_id, h.fecha, h.horas, h.nota, u.nombre FROM time_logs h JOIN users u ON u.id = h.user_id
     WHERE h.task_id = ? ORDER BY h.fecha DESC, h.id DESC`, t.id);
-  t.horas_total = Math.round(t.horas.reduce((s, h) => s + Number(h.horas), 0) * 100) / 100;
+  t.horas_total = deMinutos(t.horas.reduce((s, h) => s + aMinutos(h.horas), 0));
   res.json(t);
 });
 
@@ -326,9 +329,20 @@ app.delete('/api/tasks/:id', auth.requireAuth, async (req, res) => {
 });
 
 // ---------- registro de horas (bitácora) ----------
+// El tiempo se escribe como horas.minutos: 1.30 = 1 hora 30 minutos; 0.01 = 1 minuto; máximo 99.59.
+// Las sumas se hacen en minutos para que 0.30 + 0.30 = 1.00.
+const aMinutos = (v) => { const n = Number(v) || 0; const h = Math.floor(n); return h * 60 + Math.round((n - h) * 100); };
+const deMinutos = (m) => Math.floor(m / 60) + (m % 60) / 100;
+function leerHoras(v) {
+  const m = /^(\d{1,2})(?:\.(\d{1,2}))?$/.exec(String(v ?? '').trim().replace(',', '.'));
+  if (!m) return null;
+  const horas = Number(m[1]);
+  const minutos = m[2] === undefined ? 0 : Number(m[2].padEnd(2, '0'));
+  if (minutos > 59 || horas * 60 + minutos === 0) return null;
+  return horas + minutos / 100;
+}
 // Quien puede avanzar una tarea (responsable, dueño del pendiente o administrador) registra sus propias horas.
 const lunesDe = (d) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x.toISOString().slice(0, 10); };
-const redondear = (n) => Math.round(Number(n) * 100) / 100;
 
 app.post('/api/tasks/:id/horas', auth.requireAuth, async (req, res) => {
   const t = await loadTask(req, Number(req.params.id));
@@ -336,13 +350,13 @@ app.post('/api/tasks/:id/horas', auth.requireAuth, async (req, res) => {
   const puede = (t.personal ? t.creado_por === req.user.id : isAdmin(req)) || t.responsables.some((r) => r.id === req.user.id);
   if (!puede) return bad(res, 'Solo los responsables pueden registrar horas en esta tarea.', 403);
   const b = req.body || {};
-  const horas = redondear(String(b.horas ?? '').replace(',', '.'));
-  if (!Number.isFinite(horas) || horas <= 0 || horas > 24) return bad(res, 'Escribe las horas como un número mayor que 0 y hasta 24 (por ejemplo 1.5).');
+  const horas = leerHoras(b.horas);
+  if (horas === null) return bad(res, 'Escribe el tiempo como horas.minutos: de 0.01 (1 minuto) a 99.59. Los minutos van de .00 a .59 (por ejemplo 1.30 = 1 hora 30 minutos).');
   const f = fecha(b.fecha) || hoy();
   if (f > masDias(hoy(), 1)) return bad(res, 'No puedes registrar horas en una fecha futura.');
   const id = await db.transaccion(async (q) => {
     const r = await q.run('INSERT INTO time_logs (task_id, user_id, fecha, horas, nota) VALUES (?, ?, ?, ?, ?)', t.id, req.user.id, f, horas, txt(b.nota, 300));
-    await logTask(q, t.id, req.user.id, 'horas', `Registró ${horas} h el ${f}${txt(b.nota, 300) ? ': ' + txt(b.nota, 300) : ''}`);
+    await logTask(q, t.id, req.user.id, 'horas', `Registró ${horas.toFixed(2)} h el ${f}${txt(b.nota, 300) ? ': ' + txt(b.nota, 300) : ''}`);
     return r.lastInsertRowid;
   });
   res.json({ id });
@@ -354,7 +368,7 @@ app.delete('/api/horas/:id', auth.requireAuth, async (req, res) => {
   if (h.user_id !== req.user.id && !isAdmin(req)) return bad(res, 'Solo puedes borrar tus propios registros.', 403);
   await db.transaccion(async (q) => {
     await q.run('DELETE FROM time_logs WHERE id = ?', h.id);
-    await logTask(q, h.task_id, req.user.id, 'horas', `Borró un registro de ${h.horas} h del ${h.fecha}`);
+    await logTask(q, h.task_id, req.user.id, 'horas', `Borró un registro de ${Number(h.horas).toFixed(2)} h del ${h.fecha}`);
   });
   res.json({ ok: true });
 });
@@ -375,18 +389,21 @@ app.get('/api/bitacora', auth.requireAuth, async (req, res) => {
   const personas = new Map();
   for (const e of entradas) {
     const s = lunesDe(e.fecha);
-    semanas.set(s, (semanas.get(s) || 0) + Number(e.horas));
-    const p = personas.get(e.user_id) || { id: e.user_id, nombre: e.nombre, horas: 0 };
-    p.horas += Number(e.horas);
+    const m = aMinutos(e.horas);
+    semanas.set(s, (semanas.get(s) || 0) + m);
+    const p = personas.get(e.user_id) || { id: e.user_id, nombre: e.nombre, minutos: 0 };
+    p.minutos += m;
     personas.set(e.user_id, p);
   }
   const semanaActual = lunesDe(hoy());
+  const total = entradas.reduce((s, e) => s + aMinutos(e.horas), 0);
   res.json({
     desde, hasta,
-    total: redondear(entradas.reduce((s, e) => s + Number(e.horas), 0)),
-    esta_semana: redondear(semanas.get(semanaActual) || 0),
-    por_semana: [...semanas].sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([inicio, horas]) => ({ inicio, fin: masDias(inicio, 6), horas: redondear(horas) })),
-    por_persona: [...personas.values()].map((p) => ({ ...p, horas: redondear(p.horas) })).sort((a, b) => b.horas - a.horas),
+    total: deMinutos(total),
+    esta_semana: deMinutos(semanas.get(semanaActual) || 0),
+    promedio_semana: deMinutos(semanas.size ? Math.round(total / semanas.size) : 0),
+    por_semana: [...semanas].sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([inicio, m]) => ({ inicio, fin: masDias(inicio, 6), horas: deMinutos(m), minutos: m })),
+    por_persona: [...personas.values()].sort((a, b) => b.minutos - a.minutos).map((p) => ({ id: p.id, nombre: p.nombre, horas: deMinutos(p.minutos) })),
     entradas,
   });
 });

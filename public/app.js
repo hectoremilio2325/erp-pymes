@@ -15,6 +15,7 @@ const ESTADO_TAREA = { pendiente: 'Pendiente', en_progreso: 'En progreso', compl
 const TIPO_EVENTO = { actividad: 'Actividad', reunion: 'Reunión', entrega: 'Fecha de entrega', festivo: 'Día festivo', vacaciones: 'Vacaciones', otro: 'Otro' };
 const TIPO_INC = { home_office: 'Home Office', permiso: 'Permiso', ausencia: 'Ausencia', vacaciones: 'Vacaciones', retardo: 'Retardo', otra: 'Otra incidencia' };
 const ESTADO_INC = { pendiente: 'Pendiente', aprobada: 'Aprobada', rechazada: 'Rechazada', cancelada: 'Cancelada' };
+const fmtHoras = (n) => `${Number(n || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} h`;
 const chip = (clase, texto) => `<span class="etiqueta-chip chip-${esc(clase)}">${esc(texto)}</span>`;
 const opciones = (mapa, sel) => Object.entries(mapa).map(([k, v]) => `<option value="${esc(k)}"${k === sel ? ' selected' : ''}>${esc(v)}</option>`).join('');
 
@@ -84,6 +85,7 @@ const esAdmin = () => estado.yo && estado.yo.rol === 'admin';
 const RUTAS = {
   panel: { titulo: 'Panel principal', fn: vistaPanel },
   tareas: { titulo: 'Tareas y pendientes', fn: vistaTareas },
+  bitacora: { titulo: 'Bitácora de horas', fn: vistaBitacora },
   calendario: { titulo: 'Calendario', fn: vistaCalendario },
   incidencias: { titulo: 'Incidencias', fn: vistaIncidencias },
   directorio: { titulo: 'Directorio', fn: vistaDirectorio },
@@ -265,14 +267,15 @@ async function vistaTareas(v) {
       ${esAdmin() ? `<select id="f-resp" aria-label="Responsable"><option value="">Todos los responsables</option>${estado.usuarios.filter((u) => u.activo).map((u) => `<option value="${u.id}"${String(u.id) === f.responsable ? ' selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select>` : ''}
     </div>
     <div class="tarjeta tabla-scroll">
-      <table><thead><tr><th>Tarea</th><th>Responsables</th><th>Prioridad</th><th>Fecha límite</th><th>Estado</th></tr></thead>
+      <table><thead><tr><th>Tarea</th><th>Responsables</th><th>Prioridad</th><th>Fecha límite</th><th>Estado</th><th>Horas</th></tr></thead>
       <tbody>${tareas.length ? tareas.map((t) => `
         <tr class="clic ${t.estado === 'completada' ? 'hecha' : ''}" data-tarea="${t.id}">
           <td><span class="titulo">${esc(t.titulo)}</span> ${t.personal ? chip('personal', 'Personal') : ''}</td>
           <td>${t.personal ? '<span class="suave">—</span>' : esc(t.responsables || '')}</td>
           <td>${chip(t.prioridad, PRIORIDAD[t.prioridad])}</td>
           <td class="${t.estado !== 'completada' && t.fecha_limite && t.fecha_limite < hoy ? 'vencida' : ''}">${fmtFecha(t.fecha_limite) || '<span class="suave">Sin fecha</span>'}</td>
-          <td>${chip(t.estado, ESTADO_TAREA[t.estado])}</td></tr>`).join('') : '<tr><td colspan="5" class="vacio">No hay tareas con estos filtros.</td></tr>'}
+          <td>${chip(t.estado, ESTADO_TAREA[t.estado])}</td>
+          <td>${t.horas_total ? fmtHoras(t.horas_total) : '<span class="suave">—</span>'}</td></tr>`).join('') : '<tr><td colspan="6" class="vacio">No hay tareas con estos filtros.</td></tr>'}
       </tbody></table></div>`;
   const recargar = () => vistaTareas(v);
   $('#f-tipo').addEventListener('change', (e) => { f.tipo = e.target.value; recargar(); });
@@ -335,11 +338,30 @@ async function abrirTarea(id, alCambiar) {
         ${puedeEditar ? '<button type="button" class="peligro" id="b-borrar">Eliminar</button><button type="button" id="b-editar">Editar</button>' : ''}
         <button type="button" data-cerrar>Cerrar</button><button class="primario" type="submit">Guardar avance</button></div>
     </form>` : '<div class="acciones"><button type="button" data-cerrar>Cerrar</button></div>'}
+    <h2>Horas trabajadas <span class="suave">· ${fmtHoras(t.horas_total)} en total</span></h2>
+    ${puedeEstado ? `
+    <form id="f-horas" class="form-horas">
+      <div class="campo"><label for="h-fe">Fecha</label><input id="h-fe" type="date" name="fecha" value="${hoyISO()}" max="${hoyISO()}" required></div>
+      <div class="campo"><label for="h-ho">Horas</label><input id="h-ho" name="horas" type="number" min="0.25" max="24" step="0.25" placeholder="1.5" required></div>
+      <div class="campo"><label for="h-no">¿Qué hiciste? (opcional)</label><input id="h-no" name="nota" maxlength="300"></div>
+      <button class="primario" type="submit">Registrar</button>
+      <div class="error"></div>
+    </form>` : ''}
+    ${t.horas.length ? `<table class="tabla-horas"><tbody>${t.horas.map((h) => `
+      <tr><td>${fmtFecha(h.fecha)}</td><td>${esc(h.nombre)}</td><td><strong>${fmtHoras(h.horas)}</strong></td><td>${esc(h.nota || '')}</td>
+      <td>${h.user_id === yo || esAdmin() ? `<button type="button" class="chico peligro" data-borrar-hora="${h.id}">Borrar</button>` : ''}</td></tr>`).join('')}
+    </tbody></table>` : '<p class="vacio">Todavía no hay horas registradas.</p>'}
     <h2>Historial</h2>
     <ul class="historial">${t.historial.map((h) => `<li><strong>${esc(h.nombre)}</strong> · ${esc(h.accion)}${h.detalle ? ': ' + esc(h.detalle) : ''} <span class="suave">· ${fmtFechaHora(h.creado_en)}</span></li>`).join('')}</ul>`,
   (root) => {
     const f = $('#f-avance', root);
     if (f) alEnviar(f, async (d) => { await api(`/api/tasks/${id}`, { method: 'PUT', body: d }); modal.cerrar(); aviso('Avance guardado'); alCambiar(); });
+    const fh = $('#f-horas', root);
+    if (fh) alEnviar(fh, async (d) => { await api(`/api/tasks/${id}/horas`, { method: 'POST', body: d }); aviso('Horas registradas'); alCambiar(); abrirTarea(id, alCambiar); });
+    $$('[data-borrar-hora]', root).forEach((b) => b.addEventListener('click', async () => {
+      if (b.dataset.confirmar !== '1') { b.dataset.confirmar = '1'; b.textContent = '¿Seguro?'; return; }
+      try { await api(`/api/horas/${b.dataset.borrarHora}`, { method: 'DELETE' }); aviso('Registro borrado'); alCambiar(); abrirTarea(id, alCambiar); } catch (e) { aviso(e.message, true); }
+    }));
     const be = $('#b-editar', root);
     if (be) be.addEventListener('click', () => formTarea(t, !!t.personal, alCambiar));
     const bb = $('#b-borrar', root);
@@ -348,6 +370,52 @@ async function abrirTarea(id, alCambiar) {
       await api(`/api/tasks/${id}`, { method: 'DELETE' }); modal.cerrar(); aviso('Tarea eliminada'); alCambiar();
     });
   });
+}
+
+// ---------- bitácora de horas ----------
+async function vistaBitacora(v) {
+  if (esAdmin() && !estado.usuarios.length) await cargarUsuarios();
+  const f = vistaBitacora.filtros ||= { desde: '', hasta: '', usuario: '' };
+  const qs = new URLSearchParams(Object.entries(f).filter(([, x]) => x)).toString();
+  const b = await api('/api/bitacora?' + qs);
+  const semanas = Math.max(1, b.por_semana.length);
+  const maxSem = Math.max(1, ...b.por_semana.map((s) => s.horas));
+  v.innerHTML = `
+    <div class="encabezado"><h1>Bitácora de horas</h1></div>
+    <div class="filtros">
+      <label class="suave">Desde <input type="date" id="b-desde" value="${esc(b.desde)}"></label>
+      <label class="suave">Hasta <input type="date" id="b-hasta" value="${esc(b.hasta)}"></label>
+      ${esAdmin() ? `<select id="b-usuario" aria-label="Persona"><option value="">Todo el equipo</option>${estado.usuarios.map((u) => `<option value="${u.id}"${String(u.id) === f.usuario ? ' selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select>` : ''}
+    </div>
+    <div class="cifras">
+      <div class="cifra"><div class="valor">${fmtHoras(b.esta_semana)}</div><div class="etiqueta">Esta semana</div></div>
+      <div class="cifra"><div class="valor">${fmtHoras(b.total)}</div><div class="etiqueta">Total del periodo</div></div>
+      <div class="cifra"><div class="valor">${fmtHoras(b.total / semanas)}</div><div class="etiqueta">Promedio por semana trabajada</div></div>
+      <div class="cifra"><div class="valor">${b.entradas.length}</div><div class="etiqueta">Registros</div></div>
+    </div>
+    <div class="columnas">
+      <div class="tarjeta tabla-scroll"><h2>Horas por semana</h2>
+        ${b.por_semana.length ? `<table><thead><tr><th>Semana</th><th>Horas</th><th></th></tr></thead><tbody>${b.por_semana.map((s) => `
+          <tr><td>${fmtFecha(s.inicio)} – ${fmtFecha(s.fin)}</td><td><strong>${fmtHoras(s.horas)}</strong></td>
+          <td class="celda-barra"><meter min="0" max="${maxSem}" value="${s.horas}"></meter></td></tr>`).join('')}</tbody></table>`
+    : '<p class="vacio">Sin horas registradas en este periodo.</p>'}
+      </div>
+      ${esAdmin() && !f.usuario ? `<div class="tarjeta tabla-scroll"><h2>Horas por persona</h2>
+        ${b.por_persona.length ? `<table><thead><tr><th>Persona</th><th>Horas</th></tr></thead><tbody>${b.por_persona.map((p) => `
+          <tr><td>${esc(p.nombre)}</td><td><strong>${fmtHoras(p.horas)}</strong></td></tr>`).join('')}</tbody></table>` : '<p class="vacio">Nadie ha registrado horas en este periodo.</p>'}
+      </div>` : ''}
+    </div>
+    <div class="tarjeta tabla-scroll"><h2>Registro detallado</h2>
+      ${b.entradas.length ? `<table><thead><tr><th>Fecha</th>${esAdmin() ? '<th>Persona</th>' : ''}<th>Tarea</th><th>Horas</th><th>Nota</th></tr></thead><tbody>${b.entradas.map((e) => `
+        <tr class="clic" data-tarea="${e.task_id}"><td>${fmtFecha(e.fecha)}</td>${esAdmin() ? `<td>${esc(e.nombre)}</td>` : ''}
+          <td>${esc(e.titulo)} ${e.personal ? chip('personal', 'Personal') : ''}</td><td><strong>${fmtHoras(e.horas)}</strong></td><td>${esc(e.nota || '')}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="vacio">Registra horas desde el detalle de cada tarea o pendiente.</p>'}
+    </div>`;
+  const recargar = () => vistaBitacora(v);
+  $('#b-desde').addEventListener('change', (e) => { f.desde = e.target.value; recargar(); });
+  $('#b-hasta').addEventListener('change', (e) => { f.hasta = e.target.value; recargar(); });
+  if ($('#b-usuario')) $('#b-usuario').addEventListener('change', (e) => { f.usuario = e.target.value; recargar(); });
+  $$('[data-tarea]', v).forEach((tr) => tr.addEventListener('click', () => abrirTarea(Number(tr.dataset.tarea), recargar)));
 }
 
 // ---------- calendario ----------

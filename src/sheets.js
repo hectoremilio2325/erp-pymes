@@ -13,13 +13,14 @@ const TABLAS = {
   tasks: { hojas: ['Tareas', 'Pendientes'], clave: ['id'], hojaDe: (fila) => (Number(fila.personal) === 1 ? 'Pendientes' : 'Tareas') },
   task_assignees: { hojas: ['Responsables'], clave: ['task_id', 'user_id'] },
   task_history: { hojas: ['Historial_Tareas'], clave: ['id'] },
+  time_logs: { hojas: ['Horas'], clave: ['id'] },
   events: { hojas: ['Calendario'], clave: ['id'] },
   incidents: { hojas: ['Incidencias'], clave: ['id'] },
   settings: { hojas: ['Configuracion'], clave: ['clave'] },
   sessions: { hojas: ['Sesiones'], clave: ['token'] },
   login_attempts: { hojas: ['Intentos_Login'], clave: ['clave'] },
 };
-const COLUMNAS_FECHA = new Set(['fecha_limite', 'fecha_inicio', 'fecha_fin', 'fecha_ingreso', 'cumpleanos']);
+const COLUMNAS_FECHA = new Set(['fecha_limite', 'fecha_inicio', 'fecha_fin', 'fecha_ingreso', 'cumpleanos', 'fecha']);
 
 // ---------- autenticación con cuenta de servicio ----------
 function credenciales() {
@@ -127,6 +128,8 @@ function deCelda(col, v) {
     if (col === 'rol') return t.startsWith('admin') || t === 'jefe' ? 'admin' : 'empleado';
     return t;
   }
+  // Horas escritas a mano con coma decimal: "1,5"
+  if (col === 'horas' && typeof v === 'string') { const n = Number(v.trim().replace(',', '.')); return Number.isFinite(n) ? n : v.trim(); }
   if (typeof v === 'number' && COLUMNAS_FECHA.has(col)) return serialAFecha(v);
   if (typeof v === 'number' && col === 'hora') return serialAHora(v);
   if (typeof v === 'boolean') return v ? 1 : 0;

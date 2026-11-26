@@ -28,6 +28,7 @@ test('modo Google Sheets: flujo completo y datos en cada hoja', async () => {
     assert.equal(falsa.filas('Responsables').filter((x) => x.task_id === r.t1).length, 2);
     assert.ok(falsa.filas('Historial_Tareas').length >= 3);
     assert.ok(falsa.filas('Historial_Tareas').every((h) => h.task_id === r.t1), 'el historial del pendiente borrado se eliminó');
+    assert.ok(falsa.filas('Horas').length === 1 && falsa.filas('Horas').every((h) => h.task_id === r.t1 && h.horas === 1.5), 'horas en la hoja Horas');
 
     // Calendario, incidencias y configuración
     assert.deepEqual(falsa.filas('Calendario').map((e) => e.titulo), ['Posada']);

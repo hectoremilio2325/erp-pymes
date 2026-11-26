@@ -8,6 +8,7 @@ Aplicación web para que una PyME organice sus actividades, dé seguimiento a la
 - **Directorio de empleados:** nombre, puesto, departamento, fecha de ingreso, cumpleaños y contacto. El administrador crea usuarios, cambia roles, restablece contraseñas y desactiva cuentas.
 - **Mi perfil:** cada persona actualiza su correo, teléfono y cumpleaños, y cambia su contraseña.
 - **Tareas y pendientes:** el administrador asigna tareas a una o varias personas con prioridad y fecha límite. Cada persona crea sus pendientes personales. Los responsables actualizan el estado y dejan comentarios de avance. Cada tarea guarda su historial de cambios.
+- **Bitácora de horas:** en cada tarea o pendiente se registran las horas que tomó (fecha, horas y nota). La bitácora muestra el total del periodo, las horas de la semana actual, las horas por semana y el registro detallado. Cada persona ve sus horas; el administrador ve las de todo el equipo y puede filtrar por persona.
 - **Calendario:** vista mensual con actividades, reuniones, entregas, días festivos, vacaciones aprobadas, cumpleaños y fechas límite de tareas.
 - **Incidencias:** solicitudes de Home Office, permisos, ausencias y vacaciones, y reportes de retardos u otras incidencias. El administrador las aprueba o rechaza con un comentario.
 - **Panel principal:** resumen de tareas abiertas, vencidas y por vencer, próximas actividades y solicitudes en espera. El administrador ve además el avance de cada colaborador.
@@ -24,7 +25,7 @@ Aplicación web para que una PyME organice sus actividades, dé seguimiento a la
 
 La app elige la base de datos según las variables de entorno:
 
-1. **Google Sheets** (`GOOGLE_SHEET_ID`): un archivo de Google Sheets es la base de datos, con una hoja por módulo (Usuarios, Tareas, Pendientes, Responsables, Historial_Tareas, Calendario, Incidencias, Configuracion, Sesiones e Intentos_Login). Es el modo que se usa en Vercel. En cada solicitud la app lee el archivo y escribe solo las filas que cambiaron.
+1. **Google Sheets** (`GOOGLE_SHEET_ID`): un archivo de Google Sheets es la base de datos, con una hoja por módulo (Usuarios, Tareas, Pendientes, Responsables, Historial_Tareas, Horas, Calendario, Incidencias, Configuracion, Sesiones e Intentos_Login). Es el modo que se usa en Vercel. En cada solicitud la app lee el archivo y escribe solo las filas que cambiaron.
 2. **Turso** (`TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN`): SQLite en la nube.
 3. **Archivo local**: si no defines nada, se usa `data/erp.db` en tu computadora. Sirve para probar la app sin configurar nada.
 

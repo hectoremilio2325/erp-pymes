@@ -5,6 +5,7 @@ const ENCABEZADOS = {
   Pendientes: ['id', 'titulo', 'descripcion', 'prioridad', 'fecha_limite', 'estado', 'personal', 'creado_por', 'creado_en', 'actualizado_en'],
   Responsables: ['task_id', 'user_id'],
   Historial_Tareas: ['id', 'task_id', 'user_id', 'accion', 'detalle', 'creado_en'],
+  Horas: ['id', 'task_id', 'user_id', 'fecha', 'horas', 'nota', 'creado_en'],
   Calendario: ['id', 'titulo', 'descripcion', 'tipo', 'fecha_inicio', 'fecha_fin', 'hora', 'general', 'creado_por', 'creado_en'],
   Incidencias: ['id', 'user_id', 'tipo', 'fecha_inicio', 'fecha_fin', 'motivo', 'estado', 'revisado_por', 'comentario_revision', 'creado_en', 'revisado_en'],
   Configuracion: ['clave', 'valor'],

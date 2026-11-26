@@ -219,7 +219,8 @@ app.get('/api/tasks', auth.requireAuth, async (req, res) => {
     params.push(Number(q.responsable));
   }
   res.json(await db.all(`SELECT t.*, u.nombre AS creado_por_nombre,
-      (SELECT group_concat(us.nombre, ', ') FROM task_assignees a JOIN users us ON us.id = a.user_id WHERE a.task_id = t.id) AS responsables
+      (SELECT group_concat(us.nombre, ', ') FROM task_assignees a JOIN users us ON us.id = a.user_id WHERE a.task_id = t.id) AS responsables,
+      (SELECT ROUND(COALESCE(SUM(h.horas), 0), 2) FROM time_logs h WHERE h.task_id = t.id) AS horas_total
     FROM tasks t JOIN users u ON u.id = t.creado_por
     WHERE ${cond.join(' AND ')}
     ORDER BY (t.estado = 'completada'), CASE WHEN t.fecha_limite = '' THEN 1 ELSE 0 END, t.fecha_limite,
@@ -231,6 +232,9 @@ app.get('/api/tasks/:id', auth.requireAuth, async (req, res) => {
   if (!t) return bad(res, 'Tarea no encontrada.', 404);
   t.historial = await db.all(`SELECT h.accion, h.detalle, h.creado_en, u.nombre FROM task_history h JOIN users u ON u.id = h.user_id
     WHERE h.task_id = ? ORDER BY h.id DESC`, t.id);
+  t.horas = await db.all(`SELECT h.id, h.user_id, h.fecha, h.horas, h.nota, u.nombre FROM time_logs h JOIN users u ON u.id = h.user_id
+    WHERE h.task_id = ? ORDER BY h.fecha DESC, h.id DESC`, t.id);
+  t.horas_total = Math.round(t.horas.reduce((s, h) => s + Number(h.horas), 0) * 100) / 100;
   res.json(t);
 });
 
@@ -314,10 +318,77 @@ app.delete('/api/tasks/:id', auth.requireAuth, async (req, res) => {
   // Se borran explícitamente los registros dependientes (la base remota puede no aplicar ON DELETE CASCADE)
   await db.transaccion(async (q) => {
     await q.run('DELETE FROM task_history WHERE task_id = ?', t.id);
+    await q.run('DELETE FROM time_logs WHERE task_id = ?', t.id);
     await q.run('DELETE FROM task_assignees WHERE task_id = ?', t.id);
     await q.run('DELETE FROM tasks WHERE id = ?', t.id);
   });
   res.json({ ok: true });
+});
+
+// ---------- registro de horas (bitácora) ----------
+// Quien puede avanzar una tarea (responsable, dueño del pendiente o administrador) registra sus propias horas.
+const lunesDe = (d) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() - ((x.getUTCDay() + 6) % 7)); return x.toISOString().slice(0, 10); };
+const redondear = (n) => Math.round(Number(n) * 100) / 100;
+
+app.post('/api/tasks/:id/horas', auth.requireAuth, async (req, res) => {
+  const t = await loadTask(req, Number(req.params.id));
+  if (!t) return bad(res, 'Tarea no encontrada.', 404);
+  const puede = (t.personal ? t.creado_por === req.user.id : isAdmin(req)) || t.responsables.some((r) => r.id === req.user.id);
+  if (!puede) return bad(res, 'Solo los responsables pueden registrar horas en esta tarea.', 403);
+  const b = req.body || {};
+  const horas = redondear(String(b.horas ?? '').replace(',', '.'));
+  if (!Number.isFinite(horas) || horas <= 0 || horas > 24) return bad(res, 'Escribe las horas como un número mayor que 0 y hasta 24 (por ejemplo 1.5).');
+  const f = fecha(b.fecha) || hoy();
+  if (f > masDias(hoy(), 1)) return bad(res, 'No puedes registrar horas en una fecha futura.');
+  const id = await db.transaccion(async (q) => {
+    const r = await q.run('INSERT INTO time_logs (task_id, user_id, fecha, horas, nota) VALUES (?, ?, ?, ?, ?)', t.id, req.user.id, f, horas, txt(b.nota, 300));
+    await logTask(q, t.id, req.user.id, 'horas', `Registró ${horas} h el ${f}${txt(b.nota, 300) ? ': ' + txt(b.nota, 300) : ''}`);
+    return r.lastInsertRowid;
+  });
+  res.json({ id });
+});
+
+app.delete('/api/horas/:id', auth.requireAuth, async (req, res) => {
+  const h = await db.get('SELECT * FROM time_logs WHERE id = ?', Number(req.params.id));
+  if (!h || !(await loadTask(req, h.task_id))) return bad(res, 'Registro no encontrado.', 404);
+  if (h.user_id !== req.user.id && !isAdmin(req)) return bad(res, 'Solo puedes borrar tus propios registros.', 403);
+  await db.transaccion(async (q) => {
+    await q.run('DELETE FROM time_logs WHERE id = ?', h.id);
+    await logTask(q, h.task_id, req.user.id, 'horas', `Borró un registro de ${h.horas} h del ${h.fecha}`);
+  });
+  res.json({ ok: true });
+});
+
+// Bitácora: cada empleado ve sus horas; el administrador ve las de todos (o de una persona)
+app.get('/api/bitacora', auth.requireAuth, async (req, res) => {
+  const hasta = fecha(req.query.hasta) || hoy();
+  const desde = fecha(req.query.desde) || masDias(lunesDe(hasta), -7 * 7);
+  const w = await visibleTaskWhere(req);
+  const cond = [w.sql, 'h.fecha >= ?', 'h.fecha <= ?'];
+  const params = [...w.params, desde, hasta];
+  if (!isAdmin(req)) { cond.push('h.user_id = ?'); params.push(req.user.id); }
+  else if (req.query.usuario) { cond.push('h.user_id = ?'); params.push(Number(req.query.usuario)); }
+  const entradas = await db.all(`SELECT h.id, h.task_id, h.user_id, h.fecha, h.horas, h.nota, u.nombre, t.titulo, t.personal
+    FROM time_logs h JOIN tasks t ON t.id = h.task_id JOIN users u ON u.id = h.user_id
+    WHERE ${cond.join(' AND ')} ORDER BY h.fecha DESC, h.id DESC`, ...params);
+  const semanas = new Map();
+  const personas = new Map();
+  for (const e of entradas) {
+    const s = lunesDe(e.fecha);
+    semanas.set(s, (semanas.get(s) || 0) + Number(e.horas));
+    const p = personas.get(e.user_id) || { id: e.user_id, nombre: e.nombre, horas: 0 };
+    p.horas += Number(e.horas);
+    personas.set(e.user_id, p);
+  }
+  const semanaActual = lunesDe(hoy());
+  res.json({
+    desde, hasta,
+    total: redondear(entradas.reduce((s, e) => s + Number(e.horas), 0)),
+    esta_semana: redondear(semanas.get(semanaActual) || 0),
+    por_semana: [...semanas].sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([inicio, horas]) => ({ inicio, fin: masDias(inicio, 6), horas: redondear(horas) })),
+    por_persona: [...personas.values()].map((p) => ({ ...p, horas: redondear(p.horas) })).sort((a, b) => b.horas - a.horas),
+    entradas,
+  });
 });
 
 // ---------- calendario ----------

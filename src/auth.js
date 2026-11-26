@@ -24,8 +24,26 @@ async function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(expected, actual);
 }
 
-function validatePassword(p) {
+const iguales = (a, b) => {
+  const x = crypto.createHash('sha256').update(String(a)).digest();
+  const y = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(x, y);
+};
+
+// Revisa la contraseña de un usuario. Además del hash normal acepta la contraseña provisional:
+// - si password_hash está vacío (usuario agregado a mano en la hoja), la contraseña es el nombre de usuario;
+// - si password_hash tiene texto que no es un hash, ese texto es la contraseña.
+// En ambos casos la persona debe cambiarla al entrar.
+async function revisarPassword(password, user) {
+  const guardado = user.password_hash == null ? '' : String(user.password_hash).trim();
+  if (guardado.startsWith('scrypt$')) return { ok: await verifyPassword(password, guardado), provisional: !!user.debe_cambiar_password };
+  const esperado = guardado === '' ? user.username : guardado;
+  return { ok: iguales(password, esperado), provisional: true };
+}
+
+function validatePassword(p, username) {
   if (typeof p !== 'string' || p.length < 8) return 'La contraseña debe tener al menos 8 caracteres.';
+  if (username && p.toLowerCase() === String(username).toLowerCase()) return 'La contraseña no puede ser igual a tu usuario.';
   if (!/[A-Za-z]/.test(p) || !/[0-9]/.test(p)) return 'La contraseña debe incluir letras y números.';
   return null;
 }
@@ -65,12 +83,21 @@ async function loadUser(req, _res, next) {
   const token = parseCookies(req.headers.cookie)[COOKIE];
   req.user = null;
   if (token) {
-    const row = await db.get(`SELECT u.id, u.username, u.nombre, u.rol, u.activo, s.expira_en
+    const row = await db.get(`SELECT u.id, u.username, u.nombre, u.rol, u.activo, u.debe_cambiar_password, s.expira_en
       FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`, hashToken(token));
     if (row && row.expira_en > Date.now() && row.activo) {
-      req.user = { id: row.id, username: row.username, nombre: row.nombre, rol: row.rol };
+      req.user = { id: row.id, username: row.username, nombre: row.nombre, rol: row.rol, debeCambiar: !!row.debe_cambiar_password };
       req.sessionToken = hashToken(token);
     }
+  }
+  next();
+}
+
+// Con contraseña provisional solo se permite ver el perfil propio, cambiar la contraseña y salir
+const PERMITIDAS_PROVISIONAL = new Set(['GET /api/me', 'POST /api/me/password', 'POST /api/logout', 'GET /api/setup']);
+function exigirCambioPassword(req, res, next) {
+  if (req.user && req.user.debeCambiar && !PERMITIDAS_PROVISIONAL.has(`${req.method} ${req.baseUrl}${req.path}`)) {
+    return res.status(403).json({ error: 'Primero cambia tu contraseña provisional.', debe_cambiar_password: true });
   }
   next();
 }
@@ -104,6 +131,6 @@ async function loginCorrecto(clave) {
 }
 
 module.exports = {
-  hashPassword, verifyPassword, validatePassword, createSession, setSessionCookie,
+  hashPassword, verifyPassword, revisarPassword, validatePassword, exigirCambioPassword, createSession, setSessionCookie,
   clearSessionCookie, loadUser, requireAuth, requireAdmin, loginBloqueado, loginFallido, loginCorrecto,
 };

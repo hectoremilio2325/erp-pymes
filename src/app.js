@@ -17,6 +17,7 @@ app.use((req, res, next) => {
 });
 app.use('/api', db.middleware());
 app.use('/api', auth.loadUser);
+app.use('/api', auth.exigirCambioPassword);
 
 // ---------- utilidades ----------
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
@@ -44,7 +45,7 @@ app.post('/api/setup', async (req, res) => {
   const { username, password, nombre, empresa } = req.body || {};
   if (!txt(username, 40) || !txt(nombre, 120)) return bad(res, 'Nombre y usuario son obligatorios.');
   if (!USUARIO.test(username)) return bad(res, MSG_USUARIO);
-  const err = auth.validatePassword(password);
+  const err = auth.validatePassword(password, username);
   if (err) return bad(res, err);
   const hash = await auth.hashPassword(password);
   // Solo crea el administrador si todavía no existe ningún usuario (evita carreras entre dos solicitudes)
@@ -61,16 +62,18 @@ app.post('/api/login', async (req, res) => {
   const { username, password } = req.body || {};
   const clave = `${req.ip}|${String(username).toLowerCase().slice(0, 40)}`;
   if (await auth.loginBloqueado(clave)) return bad(res, 'Demasiados intentos. Espera 15 minutos e inténtalo de nuevo.', 429);
-  const u = await db.get('SELECT id, password_hash, activo FROM users WHERE username = ?', txt(username, 40));
-  if (!u || !(await auth.verifyPassword(password || '', u.password_hash))) {
+  const u = await db.get('SELECT id, username, password_hash, activo, debe_cambiar_password FROM users WHERE username = ?', txt(username, 40));
+  const r = u ? await auth.revisarPassword(password || '', u) : { ok: false };
+  if (!r.ok) {
     await auth.loginFallido(clave);
     return bad(res, 'Usuario o contraseña incorrectos.', 401);
   }
   if (!u.activo) return bad(res, 'Tu cuenta está desactivada. Habla con el administrador.', 403);
   await auth.loginCorrecto(clave);
+  if (r.provisional && !u.debe_cambiar_password) await db.run('UPDATE users SET debe_cambiar_password = 1 WHERE id = ?', u.id);
   const s = await auth.createSession(u.id);
   auth.setSessionCookie(res, s.token, s.expira, req.secure);
-  res.json({ ok: true });
+  res.json({ ok: true, debe_cambiar_password: r.provisional });
 });
 
 app.post('/api/logout', async (req, res) => {
@@ -80,8 +83,8 @@ app.post('/api/logout', async (req, res) => {
 });
 
 app.get('/api/me', auth.requireAuth, async (req, res) => {
-  const u = await db.get(`SELECT id, username, nombre, rol, puesto, departamento, email, telefono, fecha_ingreso, cumpleanos
-    FROM users WHERE id = ?`, req.user.id);
+  const u = await db.get(`SELECT id, username, nombre, rol, puesto, departamento, email, telefono, fecha_ingreso, cumpleanos,
+    debe_cambiar_password FROM users WHERE id = ?`, req.user.id);
   res.json({ ...u, empresa: await setting('nombre_empresa') });
 });
 
@@ -94,11 +97,12 @@ app.put('/api/me', auth.requireAuth, async (req, res) => {
 
 app.post('/api/me/password', auth.requireAuth, async (req, res) => {
   const { actual, nueva } = req.body || {};
-  const u = await db.get('SELECT password_hash FROM users WHERE id = ?', req.user.id);
-  if (!(await auth.verifyPassword(actual || '', u.password_hash))) return bad(res, 'La contraseña actual no es correcta.');
-  const err = auth.validatePassword(nueva);
+  const u = await db.get('SELECT username, password_hash, debe_cambiar_password FROM users WHERE id = ?', req.user.id);
+  // Con contraseña provisional ya se comprobó al iniciar sesión; no se vuelve a pedir
+  if (!u.debe_cambiar_password && !(await auth.revisarPassword(actual || '', u)).ok) return bad(res, 'La contraseña actual no es correcta.');
+  const err = auth.validatePassword(nueva, u.username);
   if (err) return bad(res, err);
-  await db.run('UPDATE users SET password_hash = ? WHERE id = ?', await auth.hashPassword(nueva), req.user.id);
+  await db.run('UPDATE users SET password_hash = ?, debe_cambiar_password = 0 WHERE id = ?', await auth.hashPassword(nueva), req.user.id);
   // Cierra las demás sesiones del usuario
   await db.run('DELETE FROM sessions WHERE user_id = ? AND token <> ?', req.user.id, req.sessionToken);
   res.json({ ok: true });
@@ -126,11 +130,10 @@ app.post('/api/users', auth.requireAdmin, async (req, res) => {
   const f = userFields(b);
   if (!f.nombre) return bad(res, 'El nombre es obligatorio.');
   if (!USUARIO.test(b.username || '')) return bad(res, MSG_USUARIO);
-  const err = auth.validatePassword(b.password);
-  if (err) return bad(res, err);
   if (await db.get('SELECT 1 FROM users WHERE username = ?', b.username)) return bad(res, 'Ese nombre de usuario ya existe.', 409);
-  const r = await db.run(`INSERT INTO users (username, password_hash, nombre, rol, puesto, departamento, email, telefono, fecha_ingreso, cumpleanos)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, b.username, await auth.hashPassword(b.password), f.nombre, f.rol, f.puesto,
+  // La contraseña provisional es el mismo nombre de usuario; se pide cambiarla en el primer inicio de sesión
+  const r = await db.run(`INSERT INTO users (username, password_hash, nombre, rol, puesto, departamento, email, telefono, fecha_ingreso, cumpleanos, debe_cambiar_password)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`, b.username, await auth.hashPassword(b.username), f.nombre, f.rol, f.puesto,
   f.departamento, f.email, f.telefono, f.fecha_ingreso, f.cumpleanos);
   res.json({ id: r.lastInsertRowid });
 });
@@ -157,10 +160,10 @@ app.put('/api/users/:id', auth.requireAdmin, async (req, res) => {
 
 app.post('/api/users/:id/password', auth.requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  if (!(await db.get('SELECT 1 FROM users WHERE id = ?', id))) return bad(res, 'Usuario no encontrado.', 404);
-  const err = auth.validatePassword((req.body || {}).password);
-  if (err) return bad(res, err);
-  await db.run('UPDATE users SET password_hash = ? WHERE id = ?', await auth.hashPassword(req.body.password), id);
+  const u = await db.get('SELECT username FROM users WHERE id = ?', id);
+  if (!u) return bad(res, 'Usuario no encontrado.', 404);
+  // Restablecer = volver a la contraseña provisional (el nombre de usuario), que debe cambiar al entrar
+  await db.run('UPDATE users SET password_hash = ?, debe_cambiar_password = 1 WHERE id = ?', await auth.hashPassword(u.username), id);
   await db.run('DELETE FROM sessions WHERE user_id = ?', id);
   res.json({ ok: true });
 });

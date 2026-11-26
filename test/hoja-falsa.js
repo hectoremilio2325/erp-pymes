@@ -1,6 +1,6 @@
 // Servidor falso de Google Sheets en memoria (implementa solo lo que usa la app)
 const ENCABEZADOS = {
-  Usuarios: ['id', 'username', 'password_hash', 'nombre', 'rol', 'puesto', 'departamento', 'email', 'telefono', 'fecha_ingreso', 'cumpleanos', 'activo', 'creado_en'],
+  Usuarios: ['id', 'username', 'password_hash', 'nombre', 'rol', 'puesto', 'departamento', 'email', 'telefono', 'fecha_ingreso', 'cumpleanos', 'activo', 'creado_en', 'debe_cambiar_password'],
   Tareas: ['id', 'titulo', 'descripcion', 'prioridad', 'fecha_limite', 'estado', 'personal', 'creado_por', 'creado_en', 'actualizado_en'],
   Pendientes: ['id', 'titulo', 'descripcion', 'prioridad', 'fecha_limite', 'estado', 'personal', 'creado_por', 'creado_en', 'actualizado_en'],
   Responsables: ['task_id', 'user_id'],
@@ -40,9 +40,11 @@ function crearHojaFalsa() {
     if (ruta === '/values:batchUpdate') {
       for (const d of cuerpo.data) {
         const h = hojas[nombre(d.range)];
-        const fila = Number(d.range.split('!A')[1]) - 1;
+        const [, letras, num] = d.range.split('!')[1].match(/^([A-Z]+)(\d+)$/);
+        const col = [...letras].reduce((a, c) => a * 26 + c.charCodeAt(0) - 64, 0) - 1;
+        const fila = Number(num) - 1;
         h[fila] ||= [];
-        d.values[0].forEach((v, j) => { if (v !== null) h[fila][j] = v; });
+        d.values[0].forEach((v, j) => { if (v !== null) h[fila][col + j] = v; });
       }
       return ok({});
     }

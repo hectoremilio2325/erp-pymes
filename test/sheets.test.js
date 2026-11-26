@@ -20,6 +20,7 @@ test('modo Google Sheets: flujo completo y datos en cada hoja', async () => {
     assert.equal(usuarios.length, 3);
     assert.ok(usuarios.every((u) => /^scrypt\$/.test(u.password_hash)));
     assert.equal(usuarios.find((u) => u.username === 'luis').activo, 0);
+    assert.ok(usuarios.every((u) => u.debe_cambiar_password === 0));
 
     // Tareas asignadas y pendientes personales en hojas separadas; el pendiente borrado ya no está
     assert.deepEqual(falsa.filas('Tareas').map((t) => t.titulo), ['Reporte mensual']);
@@ -53,6 +54,30 @@ test('modo Google Sheets: flujo completo y datos en cada hoja', async () => {
     const nuevo = (await jefa('POST', '/api/events', { titulo: 'Mía', fecha_inicio: '2026-12-02' })).data.id;
     assert.equal(nuevo, 100, 'los nuevos id siguen al mayor del archivo');
     assert.ok(falsa.hojas.Calendario.some((f) => f[0] === 99), 'la fila inválida sigue en la hoja');
+
+    // Usuario agregado a mano en la hoja, sin id y sin contraseña: entra con su usuario y debe cambiarla
+    falsa.hojas.Usuarios.push(['', 'pedro', '', 'Pedro Gómez', 'empleado']);
+    const pedro = cliente(base);
+    const lp = await pedro('POST', '/api/login', { username: 'pedro', password: 'pedro' });
+    assert.equal(lp.status, 200); assert.equal(lp.data.debe_cambiar_password, true);
+    const filaPedro = falsa.filas('Usuarios').find((u) => u.username === 'pedro');
+    assert.equal(filaPedro.id, 4, 'se le asignó id en la hoja');
+    assert.equal(falsa.filas('Usuarios').filter((u) => u.username === 'pedro').length, 1, 'sin filas duplicadas');
+    assert.equal((await pedro('GET', '/api/tasks')).status, 403);
+    assert.equal((await pedro('POST', '/api/me/password', { nueva: 'PedroClave9' })).status, 200);
+    assert.match(falsa.filas('Usuarios').find((u) => u.username === 'pedro').password_hash, /^scrypt\$/);
+    // Valores escritos a mano como "si" y "Admin" se entienden
+    falsa.hojas.Usuarios.push([60, 'memo', 'memo', 'Memo', 'Admin', '', '', '', '', '', '', 'si']);
+    const memo = cliente(base);
+    await memo('POST', '/api/login', { username: 'memo', password: 'memo' });
+    assert.equal((await memo('POST', '/api/me/password', { nueva: 'MemoClave1' })).status, 200);
+    assert.equal((await memo('GET', '/api/users')).data.find((u) => u.username === 'memo').rol, 'admin');
+    falsa.hojas.Usuarios.push([61, 'inactivo1', 'inactivo1', 'Ina', '', '', '', '', '', '', '', 'no']);
+    assert.equal((await cliente(base)('POST', '/api/login', { username: 'inactivo1', password: 'inactivo1' })).status, 403);
+
+    // Contraseña escrita a mano en texto en la hoja: también funciona como provisional
+    falsa.hojas.Usuarios.push([50, 'sofia', 'sofia', 'Sofía']);
+    assert.equal((await cliente(base)('POST', '/api/login', { username: 'sofia', password: 'sofia' })).data.debe_cambiar_password, true);
 
     // Columnas reordenadas por el usuario: la app las sigue leyendo por su nombre
     const h = falsa.hojas.Incidencias;

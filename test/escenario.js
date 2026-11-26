@@ -30,16 +30,29 @@ async function escenario(base, hashDe) {
   assert.match(h, /^scrypt\$/); assert.ok(!h.includes('Secreta123'));
 
   // Crear empleados
-  const a = await admin('POST', '/api/users', { nombre: 'Ana', username: 'ana', password: 'AnaClave1', puesto: 'Ventas', cumpleanos: '1990-12-03' });
-  const l = await admin('POST', '/api/users', { nombre: 'Luis', username: 'luis', password: 'LuisClave1' });
-  assert.equal((await admin('POST', '/api/users', { nombre: 'Dup', username: 'ANA', password: 'AnaClave1' })).status, 409);
+  // Usuarios nuevos: la contraseña provisional es su usuario (guardada con hash)
+  const a = await admin('POST', '/api/users', { nombre: 'Ana', username: 'ana', puesto: 'Ventas', cumpleanos: '1990-12-03' });
+  const l = await admin('POST', '/api/users', { nombre: 'Luis', username: 'luis' });
+  assert.equal((await admin('POST', '/api/users', { nombre: 'Dup', username: 'ANA' })).status, 409);
+  assert.match(await hashDe('ana'), /^scrypt\$/);
 
   assert.equal((await ana('POST', '/api/login', { username: 'ana', password: 'mal' })).status, 401);
-  assert.equal((await ana('POST', '/api/login', { username: 'ana', password: 'AnaClave1' })).status, 200);
+  const la = await ana('POST', '/api/login', { username: 'ana', password: 'ana' });
+  assert.equal(la.status, 200); assert.equal(la.data.debe_cambiar_password, true);
+  // Con contraseña provisional no puede usar la app hasta cambiarla
+  assert.equal((await ana('GET', '/api/me')).data.debe_cambiar_password, 1);
+  assert.equal((await ana('GET', '/api/tasks')).status, 403);
+  assert.equal((await ana('POST', '/api/me/password', { nueva: 'ana' })).status, 400);
+  assert.equal((await ana('POST', '/api/me/password', { nueva: 'AnaClave1' })).status, 200);
+  assert.equal((await ana('GET', '/api/tasks')).status, 200);
+  assert.equal((await ana('GET', '/api/me')).data.debe_cambiar_password, 0);
+  assert.equal((await luis('POST', '/api/login', { username: 'luis', password: 'luis' })).status, 200);
+  assert.equal((await luis('POST', '/api/me/password', { nueva: 'LuisClave1' })).status, 200);
+  assert.equal((await luis('POST', '/api/login', { username: 'luis', password: 'luis' })).status, 401, 'la provisional ya no sirve');
   assert.equal((await luis('POST', '/api/login', { username: 'luis', password: 'LuisClave1' })).status, 200);
 
   // Empleado no puede crear usuarios
-  assert.equal((await ana('POST', '/api/users', { nombre: 'X', username: 'xx1', password: 'Clave1234' })).status, 403);
+  assert.equal((await ana('POST', '/api/users', { nombre: 'X', username: 'xx1' })).status, 403);
   // Directorio de empleado sin datos de rol/usuario
   const dir = (await ana('GET', '/api/users')).data;
   assert.ok(dir.length === 3 && dir[0].username === undefined);
@@ -104,6 +117,12 @@ async function escenario(base, hashDe) {
   assert.equal((await ana('POST', '/api/me/password', { actual: 'mal', nueva: 'NuevaClave2' })).status, 400);
   assert.equal((await ana('POST', '/api/me/password', { actual: 'AnaClave1', nueva: 'NuevaClave2' })).status, 200);
   assert.equal((await ana('GET', '/api/me')).status, 200, 'la sesión actual sigue activa');
+  // Restablecer: vuelve a la contraseña provisional (su usuario)
+  assert.equal((await ana('POST', `/api/users/${l.data.id}/password`, {})).status, 403);
+  assert.equal((await admin('POST', `/api/users/${l.data.id}/password`, {})).status, 200);
+  assert.equal((await luis('GET', '/api/me')).status, 401, 'se cerraron sus sesiones');
+  assert.equal((await luis('POST', '/api/login', { username: 'luis', password: 'luis' })).data.debe_cambiar_password, true);
+  assert.equal((await luis('POST', '/api/me/password', { nueva: 'LuisClave1' })).status, 200);
   await admin('PUT', `/api/users/${l.data.id}`, { nombre: 'Luis', activo: false });
   assert.equal((await luis('GET', '/api/me')).status, 401);
   assert.equal((await luis('POST', '/api/login', { username: 'luis', password: 'LuisClave1' })).status, 403);

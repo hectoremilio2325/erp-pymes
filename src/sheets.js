@@ -111,8 +111,22 @@ function serialAHora(n) {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 }
 // Valor de una celda -> valor para SQLite (undefined = celda vacía)
+const COLUMNAS_SI_NO = new Set(['activo', 'personal', 'general', 'debe_cambiar_password']);
+const COLUMNAS_OPCION = new Set(['rol', 'prioridad', 'estado', 'tipo']);
+const sinAcentos = (t) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 function deCelda(col, v) {
-  if (v === undefined || v === null || v === '') return undefined;
+  if (v === undefined || v === null || (typeof v === 'string' && v.trim() === '')) return undefined;
+  // Valores escritos a mano: "sí"/"no", "Admin", "En progreso", "Home Office"...
+  if (COLUMNAS_SI_NO.has(col) && typeof v === 'string') {
+    const t = sinAcentos(v.trim().toLowerCase());
+    if (['si', 's', 'yes', 'true', 'verdadero', 'x', '1', 'activo'].includes(t)) return 1;
+    if (['no', 'n', 'false', 'falso', '0', 'inactivo'].includes(t)) return 0;
+  }
+  if (COLUMNAS_OPCION.has(col) && typeof v === 'string') {
+    const t = sinAcentos(v.trim().toLowerCase()).replace(/\s+/g, '_');
+    if (col === 'rol') return t.startsWith('admin') || t === 'jefe' ? 'admin' : 'empleado';
+    return t;
+  }
   if (typeof v === 'number' && COLUMNAS_FECHA.has(col)) return serialAFecha(v);
   if (typeof v === 'number' && col === 'hora') return serialAHora(v);
   if (typeof v === 'boolean') return v ? 1 : 0;
@@ -122,6 +136,12 @@ function deCelda(col, v) {
 const aCelda = (v) => (v === null || v === undefined ? '' : typeof v === 'bigint' ? Number(v) : v);
 
 // ---------- carga y guardado ----------
+function letraColumna(i) {
+  let s = '';
+  for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+  return s;
+}
+
 async function columnasDe(client, tabla) {
   const rs = await client.execute(`PRAGMA table_info(${tabla})`);
   return rs.rows.map((r) => r[1]);
@@ -144,10 +164,13 @@ async function cargar(api, esquema) {
 
   const columnas = {};
   const base = {};
+  const idsNuevos = [];
   for (const [tabla, def] of Object.entries(TABLAS)) {
     const cols = await columnasDe(client, tabla);
     columnas[tabla] = cols;
+    // Primera pasada: leer las filas y encontrar el id más alto del archivo
     let maxId = 0;
+    const pendientes = [];
     for (const hoja of def.hojas) {
       const filas = datos[hoja];
       if (!filas.length) throw new Error(`La hoja "${hoja}" no tiene encabezados en la fila 1.`);
@@ -160,12 +183,20 @@ async function cargar(api, esquema) {
         if (!Object.keys(valores).length) continue; // fila vacía
         if (cols.includes('id') && Number(valores.id) > maxId) maxId = Number(valores.id);
         if (tabla === 'tasks') valores.personal = hoja === 'Pendientes' ? 1 : 0;
-        const nombres = Object.keys(valores);
-        try {
-          await client.execute({ sql: `INSERT INTO ${tabla} (${nombres.join(', ')}) VALUES (${nombres.map(() => '?').join(', ')})`, args: nombres.map((n) => valores[n]) });
-        } catch (e) {
-          console.warn(`Fila ${i + 1} de la hoja "${hoja}" ignorada: ${e.message}`);
-        }
+        pendientes.push({ hoja, fila: i + 1, valores, colId: enc.indexOf('id') });
+      }
+    }
+    // Segunda pasada: insertar. Una fila agregada a mano sin id recibe uno nuevo, que se escribe en la hoja al guardar.
+    for (const p of pendientes) {
+      if (cols.includes('id') && p.valores.id === undefined) {
+        p.valores.id = ++maxId;
+        idsNuevos.push({ hoja: p.hoja, fila: p.fila, colId: p.colId, id: p.valores.id });
+      }
+      const nombres = Object.keys(p.valores);
+      try {
+        await client.execute({ sql: `INSERT INTO ${tabla} (${nombres.join(', ')}) VALUES (${nombres.map(() => '?').join(', ')})`, args: nombres.map((n) => p.valores[n]) });
+      } catch (e) {
+        console.warn(`Fila ${p.fila} de la hoja "${p.hoja}" ignorada: ${e.message}`);
       }
     }
     if (tabla === 'settings') {
@@ -179,7 +210,7 @@ async function cargar(api, esquema) {
     }
     base[tabla] = new Map((await todasLasFilas(client, tabla)).map((f) => [claveDe(def, f), f]));
   }
-  return { client, base, columnas };
+  return { client, base, columnas, idsNuevos };
 }
 
 // Escribe en el archivo solo lo que cambió durante la solicitud
@@ -198,12 +229,20 @@ async function guardar(api, ctx) {
     for (const [k, f] of antes) if (!despues.has(k)) de(hojaDe(f)).borradas.push({ tabla, k, f });
   }
   const hojas = Object.keys(porHoja).filter((h) => porHoja[h].cambiadas.length || porHoja[h].borradas.length || porHoja[h].nuevas.length);
-  if (!hojas.length) return;
+  const hojasIds = [...new Set(ctx.idsNuevos.map((x) => x.hoja))];
+  if (!hojas.length && !hojasIds.length) return;
 
   // Vuelve a leer las hojas afectadas para ubicar cada fila por su clave justo antes de escribir
-  const actuales = await api.leer(hojas);
+  const actuales = await api.leer([...new Set([...hojas, ...hojasIds])]);
   const actualizaciones = [];
   const borrados = [];
+  // Escribe el id asignado a las filas que se agregaron a mano sin id (si la fila sigue en su lugar y sin id)
+  for (const x of ctx.idsNuevos) {
+    const f = actuales[x.hoja][x.fila - 1];
+    if (f && deCelda('id', f[x.colId]) === undefined && f.some((v) => v !== '' && v !== null && v !== undefined)) {
+      actualizaciones.push({ range: `'${x.hoja.replace(/'/g, "''")}'!${letraColumna(x.colId)}${x.fila}`, values: [[x.id]] });
+    }
+  }
   for (const hoja of hojas) {
     const filas = actuales[hoja];
     const enc = filas[0].map((h) => String(h).trim());
@@ -214,6 +253,7 @@ async function guardar(api, ctx) {
     for (let i = 1; i < filas.length; i++) {
       const f = {};
       enc.forEach((h, j) => { f[h] = deCelda(h, filas[i][j]); });
+      if (f.id === undefined) { const x = ctx.idsNuevos.find((n) => n.hoja === hoja && n.fila === i + 1); if (x) f.id = x.id; }
       if (def.clave.every((c) => f[c] !== undefined)) posicion.set(claveDe(def, f), i + 1);
     }
     // Las columnas que no son de la app (si el usuario agregó alguna) no se tocan: null = no escribir

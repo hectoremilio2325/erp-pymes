@@ -27,9 +27,9 @@ const ESQUEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  password_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL DEFAULT '',
   nombre TEXT NOT NULL,
-  rol TEXT NOT NULL CHECK (rol IN ('admin','empleado')),
+  rol TEXT NOT NULL DEFAULT 'empleado' CHECK (rol IN ('admin','empleado')),
   puesto TEXT DEFAULT '',
   departamento TEXT DEFAULT '',
   email TEXT DEFAULT '',
@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS users (
   fecha_ingreso TEXT DEFAULT '',
   cumpleanos TEXT DEFAULT '',
   activo INTEGER NOT NULL DEFAULT 1,
-  creado_en TEXT NOT NULL DEFAULT (datetime('now'))
+  creado_en TEXT NOT NULL DEFAULT (datetime('now')),
+  debe_cambiar_password INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -124,6 +125,11 @@ function conexion() {
       listo: (async () => {
         if (c.local) await c.client.execute('PRAGMA journal_mode = WAL');
         await c.client.executeMultiple(ESQUEMA);
+        // Bases creadas con la versión anterior: agrega la columna nueva si falta
+        const cols = (await c.client.execute('PRAGMA table_info(users)')).rows.map((r) => r[1]);
+        if (!cols.includes('debe_cambiar_password')) {
+          await c.client.execute('ALTER TABLE users ADD COLUMN debe_cambiar_password INTEGER NOT NULL DEFAULT 0');
+        }
       })(),
     };
     estado.listo.catch(() => { estado = null; });

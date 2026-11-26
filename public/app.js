@@ -27,6 +27,7 @@ async function api(url, opts = {}) {
   });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !url.startsWith('/api/login') && !url.startsWith('/api/me/password')) { estado.yo = null; mostrarAcceso(); throw new Error(data.error || 'Sesión expirada'); }
+  if (res.status === 403 && data.debe_cambiar_password) { location.reload(); throw new Error(data.error); }
   if (!res.ok) throw new Error(data.error || 'Ocurrió un error.');
   return data;
 }
@@ -97,6 +98,7 @@ async function iniciar() {
     const r = await fetch('/api/me', { credentials: 'same-origin' });
     if (!r.ok) return mostrarAcceso(s.empresa);
     estado.yo = await r.json();
+    if (estado.yo.debe_cambiar_password) return mostrarCambioObligatorio();
     montarLayout();
     window.addEventListener('hashchange', navegar);
     navegar();
@@ -120,6 +122,30 @@ function mostrarAcceso(empresa) {
     </main>`;
   alEnviar($('#f-login'), async (d) => { await api('/api/login', { method: 'POST', body: d }); location.hash = '#/panel'; location.reload(); });
   $('#l-u').focus();
+}
+
+function mostrarCambioObligatorio() {
+  $('#app').className = '';
+  $('#app').innerHTML = `
+    <main class="acceso">
+      <form class="tarjeta" id="f-nueva">
+        <h1>Crea tu contraseña</h1>
+        <p>Hola, ${esc(estado.yo.nombre)}. Entraste con una contraseña provisional. Antes de continuar, elige una contraseña propia.</p>
+        <div class="campo"><label for="n-p">Nueva contraseña</label><input id="n-p" name="nueva" type="password" autocomplete="new-password" required>
+          <span class="ayuda">Mínimo 8 caracteres, con letras y números, y distinta de tu usuario.</span></div>
+        <div class="campo"><label for="n-c">Confirmar contraseña</label><input id="n-c" name="confirmar" type="password" autocomplete="new-password" required></div>
+        <div class="error"></div>
+        <button class="primario" type="submit">Guardar y entrar</button>
+        <button type="button" id="n-salir">Cerrar sesión</button>
+      </form>
+    </main>`;
+  alEnviar($('#f-nueva'), async (d) => {
+    if (d.nueva !== d.confirmar) throw new Error('Las contraseñas no coinciden.');
+    await api('/api/me/password', { method: 'POST', body: { nueva: d.nueva } });
+    location.hash = '#/panel'; location.reload();
+  });
+  $('#n-salir').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.reload(); });
+  $('#n-p').focus();
 }
 
 function mostrarConfiguracionInicial() {
@@ -515,10 +541,8 @@ function formUsuario(u, alGuardar) {
         <div class="campo"><label for="u-no">Nombre completo</label><input id="u-no" name="nombre" required value="${esc(u?.nombre)}"></div>
         <div class="campo"><label for="u-ro">Rol</label><select id="u-ro" name="rol">${opciones({ empleado: 'Colaborador', admin: 'Administrador' }, u?.rol || 'empleado')}</select></div>
       </div>
-      ${u ? '' : `<div class="fila">
-        <div class="campo"><label for="u-us">Usuario</label><input id="u-us" name="username" required autocomplete="off"></div>
-        <div class="campo"><label for="u-pw">Contraseña inicial</label><input id="u-pw" name="password" type="password" required autocomplete="new-password"><span class="ayuda">Mínimo 8 caracteres, con letras y números.</span></div>
-      </div>`}
+      ${u ? '' : `<div class="campo"><label for="u-us">Usuario</label><input id="u-us" name="username" required autocomplete="off">
+        <span class="ayuda">La contraseña provisional será el mismo usuario. La persona tendrá que cambiarla la primera vez que entre.</span></div>`}
       <div class="fila">
         <div class="campo"><label for="u-pu">Puesto</label><input id="u-pu" name="puesto" value="${esc(u?.puesto)}"></div>
         <div class="campo"><label for="u-de">Departamento</label><input id="u-de" name="departamento" value="${esc(u?.departamento)}"></div>
@@ -543,12 +567,12 @@ function formUsuario(u, alGuardar) {
     if (u) $('#u-reset', root).addEventListener('click', () => {
       modal.abrir(`
         <h2>Restablecer contraseña de ${esc(u.nombre)}</h2>
-        <form id="f-reset">
-          <div class="campo"><label for="r-pw">Nueva contraseña</label><input id="r-pw" name="password" type="password" required autocomplete="new-password">
-            <span class="ayuda">Mínimo 8 caracteres, con letras y números. Se cerrarán sus sesiones abiertas.</span></div>
-          <div class="error"></div>
-          <div class="acciones"><button type="button" data-cerrar>Cancelar</button><button class="primario" type="submit">Cambiar contraseña</button></div>
-        </form>`, (r2) => alEnviar($('#f-reset', r2), async (d) => { await api(`/api/users/${u.id}/password`, { method: 'POST', body: d }); modal.cerrar(); aviso('Contraseña restablecida'); }));
+        <p>Su contraseña volverá a ser su usuario, <strong>${esc(u.username)}</strong>, y tendrá que cambiarla al entrar. Se cerrarán sus sesiones abiertas.</p>
+        <div class="error"></div>
+        <div class="acciones"><button type="button" data-cerrar>Cancelar</button><button class="primario" type="button" id="r-ok">Restablecer</button></div>`,
+      (r2) => $('#r-ok', r2).addEventListener('click', async () => {
+        try { await api(`/api/users/${u.id}/password`, { method: 'POST', body: {} }); modal.cerrar(); aviso('Contraseña restablecida'); } catch (e) { $('.error', r2).textContent = e.message; }
+      }));
     });
   });
 }

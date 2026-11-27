@@ -406,6 +406,96 @@ app.get('/api/bitacora', auth.requireAuth, async (req, res) => {
   });
 });
 
+// ---------- reportes ----------
+// El administrador obtiene el reporte general (todo el equipo) o el de una persona; el empleado, solo el suyo.
+// Las tareas que se cuentan son las asignadas; los pendientes personales son privados y no entran al reporte.
+const diasEntre = (a, b) => Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 864e5) + 1;
+
+app.get('/api/reportes', auth.requireAuth, async (req, res) => {
+  const hasta = fecha(req.query.hasta) || hoy();
+  const desde = fecha(req.query.desde) || hoy().slice(0, 8) + '01';
+  if (desde > hasta) return bad(res, 'La fecha inicial debe ser anterior a la final.');
+  const hoyD = hoy();
+  let personas;
+  if (!isAdmin(req)) personas = await db.all('SELECT id, nombre, puesto, departamento FROM users WHERE id = ?', req.user.id);
+  else if (req.query.usuario) personas = await db.all('SELECT id, nombre, puesto, departamento FROM users WHERE id = ?', Number(req.query.usuario));
+  else personas = await db.all('SELECT id, nombre, puesto, departamento FROM users WHERE activo = 1 ORDER BY nombre');
+  if (!personas.length) return bad(res, 'Persona no encontrada.', 404);
+  const ids = personas.map((p) => p.id);
+  const marcas = ids.map(() => '?').join(', ');
+
+  // Tareas asignadas a estas personas, con la fecha en que se completaron (según su historial)
+  const tareas = await db.all(`SELECT t.id, t.titulo, t.prioridad, t.fecha_limite, t.estado, a.user_id,
+      (SELECT substr(MAX(h.creado_en), 1, 10) FROM task_history h WHERE h.task_id = t.id AND h.accion = 'estado' AND h.detalle LIKE '%→ Completada') AS completada_en
+    FROM tasks t JOIN task_assignees a ON a.task_id = t.id
+    WHERE t.personal = 0 AND a.user_id IN (${marcas})`, ...ids);
+  const completadas = tareas.filter((t) => t.estado === 'completada' && t.completada_en && t.completada_en >= desde && t.completada_en <= hasta)
+    .map((t) => ({ ...t, a_tiempo: !t.fecha_limite || t.completada_en <= t.fecha_limite ? 1 : 0 }));
+  const abiertas = tareas.filter((t) => t.estado !== 'completada')
+    .map((t) => ({ ...t, vencida: t.fecha_limite && t.fecha_limite < hoyD ? 1 : 0 }));
+
+  // Horas del periodo (de lo que quien consulta puede ver)
+  const w = await visibleTaskWhere(req);
+  const horas = await db.all(`SELECT h.user_id, h.fecha, h.horas, h.nota, t.titulo, t.personal FROM time_logs h JOIN tasks t ON t.id = h.task_id
+    WHERE ${w.sql} AND h.user_id IN (${marcas}) AND h.fecha >= ? AND h.fecha <= ? ORDER BY h.fecha, h.id`, ...w.params, ...ids, desde, hasta);
+
+  // Incidencias aprobadas que caen en el periodo (los días se recortan al periodo)
+  const incidencias = (await db.all(`SELECT i.user_id, i.tipo, i.fecha_inicio, CASE WHEN i.fecha_fin = '' OR i.fecha_fin IS NULL THEN i.fecha_inicio ELSE i.fecha_fin END AS fecha_fin, i.motivo
+    FROM incidents i WHERE i.estado = 'aprobada' AND i.user_id IN (${marcas})`, ...ids))
+    .filter((i) => i.fecha_inicio <= hasta && i.fecha_fin >= desde)
+    .map((i) => ({ ...i, dias: diasEntre(i.fecha_inicio < desde ? desde : i.fecha_inicio, i.fecha_fin > hasta ? hasta : i.fecha_fin) }))
+    .sort((a, b) => (a.fecha_inicio < b.fecha_inicio ? -1 : 1));
+
+  const nombre = Object.fromEntries(personas.map((p) => [p.id, p.nombre]));
+  const resumen = personas.map((p) => {
+    const c = completadas.filter((t) => t.user_id === p.id);
+    const ab = abiertas.filter((t) => t.user_id === p.id);
+    const inc = incidencias.filter((i) => i.user_id === p.id);
+    const diasTipo = (tipo) => inc.filter((i) => i.tipo === tipo).reduce((s, i) => s + i.dias, 0);
+    return {
+      id: p.id, nombre: p.nombre, puesto: p.puesto || '', departamento: p.departamento || '',
+      completadas: c.length, a_tiempo: c.filter((t) => t.a_tiempo).length,
+      cumplimiento: c.length ? Math.round((c.filter((t) => t.a_tiempo).length / c.length) * 100) : null,
+      abiertas: ab.length, vencidas: ab.filter((t) => t.vencida).length,
+      horas: deMinutos(horas.filter((h) => h.user_id === p.id).reduce((s, h) => s + aMinutos(h.horas), 0)),
+      home_office: diasTipo('home_office'), permisos: diasTipo('permiso'), ausencias: diasTipo('ausencia'),
+      vacaciones: diasTipo('vacaciones'), retardos: inc.filter((i) => i.tipo === 'retardo').length,
+    };
+  });
+  const suma = (k) => resumen.reduce((s, r) => s + r[k], 0);
+  // Una tarea con varios responsables aparece una sola vez en las listas y en los totales
+  const unicas = (lista) => {
+    const m = new Map();
+    for (const t of lista) {
+      const x = m.get(t.id);
+      if (x) x.nombre += ', ' + nombre[t.user_id];
+      else { const { user_id: _u, ...resto } = t; m.set(t.id, { ...resto, nombre: nombre[t.user_id] }); }
+    }
+    return [...m.values()];
+  };
+  const listaCompletadas = unicas(completadas).sort((a, b) => (a.completada_en < b.completada_en ? -1 : 1));
+  const listaAbiertas = unicas(abiertas).sort((a, b) => ((a.fecha_limite || '9999') < (b.fecha_limite || '9999') ? -1 : 1));
+  const totalCompletadas = listaCompletadas.length;
+  const totalATiempo = listaCompletadas.filter((t) => t.a_tiempo).length;
+  res.json({
+    desde, hasta, generado: new Date().toISOString(), empresa: await setting('nombre_empresa'),
+    alcance: personas.length === 1 && (!isAdmin(req) || req.query.usuario) ? 'individual' : 'general',
+    totales: {
+      completadas: totalCompletadas, a_tiempo: totalATiempo,
+      cumplimiento: totalCompletadas ? Math.round((totalATiempo / totalCompletadas) * 100) : null,
+      abiertas: listaAbiertas.length, vencidas: listaAbiertas.filter((t) => t.vencida).length,
+      horas: deMinutos(horas.reduce((s, h) => s + aMinutos(h.horas), 0)),
+      dias_incidencia: incidencias.filter((i) => i.tipo !== 'retardo').reduce((s, i) => s + i.dias, 0),
+      retardos: incidencias.filter((i) => i.tipo === 'retardo').length,
+    },
+    resumen,
+    completadas: listaCompletadas,
+    abiertas: listaAbiertas,
+    horas: horas.map((h) => ({ ...h, nombre: nombre[h.user_id] })),
+    incidencias: incidencias.map((i) => ({ ...i, nombre: nombre[i.user_id] })),
+  });
+});
+
 // ---------- calendario ----------
 const TIPOS_INC = { home_office: 'Home Office', permiso: 'Permiso', ausencia: 'Ausencia', vacaciones: 'Vacaciones', retardo: 'Retardo', otra: 'Otra incidencia' };
 

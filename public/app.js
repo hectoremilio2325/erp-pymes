@@ -87,6 +87,7 @@ const RUTAS = {
   panel: { titulo: 'Panel principal', fn: vistaPanel },
   tareas: { titulo: 'Tareas y pendientes', fn: vistaTareas },
   bitacora: { titulo: 'Bitácora de horas', fn: vistaBitacora },
+  reportes: { titulo: 'Reportes', fn: vistaReportes },
   calendario: { titulo: 'Calendario', fn: vistaCalendario },
   incidencias: { titulo: 'Incidencias', fn: vistaIncidencias },
   directorio: { titulo: 'Directorio', fn: vistaDirectorio, admin: true },
@@ -417,6 +418,110 @@ async function vistaBitacora(v) {
   $('#b-hasta').addEventListener('change', (e) => { f.hasta = e.target.value; recargar(); });
   if ($('#b-usuario')) $('#b-usuario').addEventListener('change', (e) => { f.usuario = e.target.value; recargar(); });
   $$('[data-tarea]', v).forEach((tr) => tr.addEventListener('click', () => abrirTarea(Number(tr.dataset.tarea), recargar)));
+}
+
+// ---------- reportes ----------
+async function vistaReportes(v) {
+  if (esAdmin() && !estado.usuarios.length) await cargarUsuarios();
+  const f = vistaReportes.filtros ||= { desde: '', hasta: '', usuario: '' };
+  const qs = new URLSearchParams(Object.entries(f).filter(([, x]) => x)).toString();
+  const r = await api('/api/reportes?' + qs);
+  const t = r.totales;
+  const pct = (n) => (n === null || n === undefined ? '—' : `${n}%`);
+  const individual = r.alcance === 'individual';
+  const titulo = individual ? `Reporte individual · ${r.resumen[0].nombre}` : 'Reporte general del equipo';
+  const tabla = (encabezados, filas, vacio) => (filas.length
+    ? `<table><thead><tr>${encabezados.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${filas.map((f2) => `<tr>${f2.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+    : `<p class="vacio">${esc(vacio)}</p>`);
+
+  v.innerHTML = `
+    <div class="encabezado no-imprimir"><h1>Reportes</h1>
+      <div><button id="r-excel">Descargar Excel</button> <button class="primario" id="r-pdf">Descargar PDF</button></div></div>
+    <div class="filtros no-imprimir">
+      <label class="suave">Desde <input type="date" id="r-desde" value="${esc(r.desde)}"></label>
+      <label class="suave">Hasta <input type="date" id="r-hasta" value="${esc(r.hasta)}"></label>
+      ${esAdmin() ? `<select id="r-usuario" aria-label="Persona"><option value="">Reporte general (todo el equipo)</option>${estado.usuarios.map((u) => `<option value="${u.id}"${String(u.id) === f.usuario ? ' selected' : ''}>${esc(u.nombre)}</option>`).join('')}</select>` : ''}
+    </div>
+    <div class="reporte">
+      <div class="reporte-encabezado">
+        <h2>${esc(r.empresa)} · ${esc(titulo)}</h2>
+        <p class="suave">Periodo: ${fmtFecha(r.desde)} al ${fmtFecha(r.hasta)} · Generado el ${new Date(r.generado).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+      </div>
+      <div class="cifras cifras-6">
+        <div class="cifra"><div class="valor">${t.completadas}</div><div class="etiqueta">Tareas completadas</div></div>
+        <div class="cifra"><div class="valor">${pct(t.cumplimiento)}</div><div class="etiqueta">Completadas a tiempo (${t.a_tiempo})</div></div>
+        <div class="cifra ${t.vencidas ? 'alerta' : ''}"><div class="valor">${t.abiertas}</div><div class="etiqueta">Abiertas hoy (${t.vencidas} vencidas)</div></div>
+        <div class="cifra"><div class="valor">${fmtHoras(t.horas)}</div><div class="etiqueta">Horas registradas</div></div>
+        <div class="cifra"><div class="valor">${t.dias_incidencia}</div><div class="etiqueta">Días de incidencias aprobadas</div></div>
+        <div class="cifra"><div class="valor">${t.retardos}</div><div class="etiqueta">Retardos</div></div>
+      </div>
+      ${individual ? '' : `<div class="tarjeta tabla-scroll"><h2>Resumen por colaborador</h2>
+        ${tabla(['Colaborador', 'Completadas', 'A tiempo', 'Abiertas', 'Vencidas', 'Horas', 'Home Office', 'Permisos', 'Ausencias', 'Vacaciones', 'Retardos'],
+    r.resumen.map((p) => [esc(p.nombre), p.completadas, pct(p.cumplimiento), p.abiertas, p.vencidas ? `<span class="vencida">${p.vencidas}</span>` : 0, fmtHoras(p.horas), p.home_office, p.permisos, p.ausencias, p.vacaciones, p.retardos]),
+    'No hay colaboradores activos.')}</div>`}
+      <div class="tarjeta tabla-scroll"><h2>Tareas completadas en el periodo</h2>
+        ${tabla(['Tarea', ...(individual ? [] : ['Responsable']), 'Prioridad', 'Fecha límite', 'Completada', 'A tiempo'],
+    r.completadas.map((x) => [esc(x.titulo), ...(individual ? [] : [esc(x.nombre)]), PRIORIDAD[x.prioridad] || esc(x.prioridad), fmtFecha(x.fecha_limite) || 'Sin fecha', fmtFecha(x.completada_en), x.a_tiempo ? 'Sí' : '<span class="vencida">No</span>']),
+    'No se completaron tareas en este periodo.')}</div>
+      <div class="tarjeta tabla-scroll"><h2>Tareas abiertas al día de hoy</h2>
+        ${tabla(['Tarea', ...(individual ? [] : ['Responsable']), 'Prioridad', 'Estado', 'Fecha límite'],
+    r.abiertas.map((x) => [esc(x.titulo), ...(individual ? [] : [esc(x.nombre)]), PRIORIDAD[x.prioridad] || esc(x.prioridad), ESTADO_TAREA[x.estado] || esc(x.estado), x.vencida ? `<span class="vencida">${fmtFecha(x.fecha_limite)}</span>` : (fmtFecha(x.fecha_limite) || 'Sin fecha')]),
+    'No hay tareas abiertas.')}</div>
+      <div class="tarjeta tabla-scroll"><h2>Horas registradas</h2>
+        ${tabla(['Fecha', ...(individual ? [] : ['Persona']), 'Tarea', 'Horas', 'Nota'],
+    r.horas.map((h) => [fmtFecha(h.fecha), ...(individual ? [] : [esc(h.nombre)]), esc(h.titulo) + (h.personal ? ' (personal)' : ''), fmtHoras(h.horas), esc(h.nota || '')]),
+    'No hay horas registradas en este periodo.')}</div>
+      <div class="tarjeta tabla-scroll"><h2>Incidencias aprobadas</h2>
+        ${tabla([...(individual ? [] : ['Persona']), 'Tipo', 'Del', 'Al', 'Días en el periodo', 'Motivo'],
+    r.incidencias.map((i) => [...(individual ? [] : [esc(i.nombre)]), TIPO_INC[i.tipo] || esc(i.tipo), fmtFecha(i.fecha_inicio), fmtFecha(i.fecha_fin), i.dias, esc(i.motivo || '')]),
+    'No hay incidencias aprobadas en este periodo.')}</div>
+    </div>`;
+
+  const recargar = () => vistaReportes(v);
+  $('#r-desde').addEventListener('change', (e) => { f.desde = e.target.value; recargar(); });
+  $('#r-hasta').addEventListener('change', (e) => { f.hasta = e.target.value; recargar(); });
+  if ($('#r-usuario')) $('#r-usuario').addEventListener('change', (e) => { f.usuario = e.target.value; recargar(); });
+  const archivo = `Reporte ${individual ? r.resumen[0].nombre : 'general'} ${r.desde} a ${r.hasta}`.replace(/[\\/:*?"<>|]/g, '');
+  $('#r-pdf').addEventListener('click', () => {
+    const antes = document.title;
+    document.title = archivo; // nombre sugerido al guardar como PDF
+    window.print();
+    document.title = antes;
+  });
+  $('#r-excel').addEventListener('click', () => {
+    const si = (b) => (b ? 'Sí' : 'No');
+    const hojas = [
+      { nombre: 'Resumen', filas: [
+        ['Concepto', 'Valor'],
+        ['Empresa', r.empresa], ['Reporte', titulo], ['Desde', r.desde], ['Hasta', r.hasta],
+        ['Tareas completadas', t.completadas], ['Completadas a tiempo', t.a_tiempo],
+        ['% a tiempo', t.cumplimiento === null ? '' : t.cumplimiento], ['Tareas abiertas hoy', t.abiertas], ['Tareas vencidas', t.vencidas],
+        ['Horas registradas (horas.minutos)', { horas: t.horas }], ['Días de incidencias aprobadas', t.dias_incidencia], ['Retardos', t.retardos],
+      ] },
+      { nombre: 'Por colaborador', filas: [
+        ['Colaborador', 'Puesto', 'Departamento', 'Completadas', 'A tiempo', '% a tiempo', 'Abiertas', 'Vencidas', 'Horas (h.mm)', 'Días Home Office', 'Días de permiso', 'Días de ausencia', 'Días de vacaciones', 'Retardos'],
+        ...r.resumen.map((p) => [p.nombre, p.puesto, p.departamento, p.completadas, p.a_tiempo, p.cumplimiento === null ? '' : p.cumplimiento, p.abiertas, p.vencidas, { horas: p.horas }, p.home_office, p.permisos, p.ausencias, p.vacaciones, p.retardos]),
+      ] },
+      { nombre: 'Tareas completadas', filas: [
+        ['Tarea', 'Responsable', 'Prioridad', 'Fecha límite', 'Completada', 'A tiempo'],
+        ...r.completadas.map((x) => [x.titulo, x.nombre, PRIORIDAD[x.prioridad] || x.prioridad, x.fecha_limite || '', x.completada_en, si(x.a_tiempo)]),
+      ] },
+      { nombre: 'Tareas abiertas', filas: [
+        ['Tarea', 'Responsable', 'Prioridad', 'Estado', 'Fecha límite', 'Vencida'],
+        ...r.abiertas.map((x) => [x.titulo, x.nombre, PRIORIDAD[x.prioridad] || x.prioridad, ESTADO_TAREA[x.estado] || x.estado, x.fecha_limite || '', si(x.vencida)]),
+      ] },
+      { nombre: 'Horas', filas: [
+        ['Fecha', 'Persona', 'Tarea', 'Personal', 'Horas (h.mm)', 'Nota'],
+        ...r.horas.map((h) => [h.fecha, h.nombre, h.titulo, si(h.personal), { horas: Number(h.horas) }, h.nota || '']),
+      ] },
+      { nombre: 'Incidencias', filas: [
+        ['Persona', 'Tipo', 'Del', 'Al', 'Días en el periodo', 'Motivo'],
+        ...r.incidencias.map((i) => [i.nombre, TIPO_INC[i.tipo] || i.tipo, i.fecha_inicio, i.fecha_fin, i.dias, i.motivo || '']),
+      ] },
+    ];
+    XLSX.descargar(`${archivo}.xlsx`, hojas);
+    aviso('Reporte descargado');
+  });
 }
 
 // ---------- calendario ----------

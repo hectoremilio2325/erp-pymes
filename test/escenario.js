@@ -141,6 +141,26 @@ async function escenario(base, hashDe) {
   assert.equal((await admin('POST', `/api/incidents/${inc}/revisar`, { estado: 'rechazada' })).status, 409);
   assert.ok((await luis('GET', '/api/events?desde=2026-12-01&hasta=2026-12-31')).data.some((x) => x.tipo === 'vacaciones'));
 
+  // Reportes
+  assert.equal((await ana('PUT', `/api/tasks/${t1}`, { estado: 'completada' })).status, 200);
+  const rango = 'desde=2000-01-01&hasta=2099-12-31';
+  const repAna = (await ana('GET', `/api/reportes?${rango}&usuario=${l.data.id}`)).data;
+  assert.equal(repAna.alcance, 'individual'); assert.equal(repAna.resumen.length, 1);
+  assert.equal(repAna.resumen[0].nombre, 'Ana', 'un empleado solo obtiene su propio reporte');
+  assert.equal(repAna.totales.completadas, 1); assert.equal(repAna.totales.a_tiempo, 0);
+  assert.equal(repAna.totales.horas, 1.3); assert.equal(repAna.resumen[0].vacaciones, 4);
+  const repGen = (await admin('GET', `/api/reportes?${rango}`)).data;
+  assert.equal(repGen.alcance, 'general'); assert.equal(repGen.resumen.length, 3);
+  assert.equal(repGen.totales.completadas, 1, 'una tarea compartida cuenta una vez');
+  assert.equal(repGen.completadas[0].nombre.split(', ').length, 2);
+  assert.equal(repGen.resumen.find((p) => p.nombre === 'Luis').completadas, 1);
+  assert.equal(repGen.totales.horas, 1.3, 'no incluye horas de pendientes personales ajenos');
+  assert.equal(repGen.totales.dias_incidencia, 4);
+  const repDic = (await admin('GET', '/api/reportes?desde=2026-12-23&hasta=2026-12-31')).data;
+  assert.equal(repDic.totales.dias_incidencia, 2, 'los días se recortan al periodo');
+  assert.equal((await admin('GET', `/api/reportes?usuario=${a.data.id}&${rango}`)).data.alcance, 'individual');
+  assert.equal((await admin('GET', '/api/reportes?desde=2026-02-01&hasta=2026-01-01')).status, 400);
+
   // Borrar un pendiente personal
   assert.equal((await luis('DELETE', `/api/tasks/${t2}`)).status, 200);
   assert.equal((await luis('GET', `/api/tasks/${t2}`)).status, 404);

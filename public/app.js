@@ -79,6 +79,38 @@ function alEnviar(form, fn) {
   });
 }
 
+// ---------- instalar como aplicación ----------
+// Chrome, Edge y Android ofrecen la instalación directa; en iPhone/iPad se explica cómo agregarla a la pantalla de inicio.
+let avisoInstalar = null;
+const yaInstalada = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); avisoInstalar = e; activarInstalar(); });
+window.addEventListener('appinstalled', () => { avisoInstalar = null; $$('.boton-instalar').forEach((b) => { b.hidden = true; }); aviso('App instalada'); });
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+
+function activarInstalar() {
+  $$('.boton-instalar').forEach((b) => {
+    b.hidden = yaInstalada();
+    if (b.dataset.listo) return;
+    b.dataset.listo = '1';
+    b.addEventListener('click', async () => {
+      if (avisoInstalar) { avisoInstalar.prompt(); await avisoInstalar.userChoice.catch(() => {}); avisoInstalar = null; return; }
+      const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      modal.abrir(`
+        <h2>Descargar la app</h2>
+        ${ios ? `<ol class="pasos">
+            <li>Abre esta página en <strong>Safari</strong>.</li>
+            <li>Toca el botón <strong>Compartir</strong> (el cuadro con una flecha hacia arriba).</li>
+            <li>Elige <strong>Agregar a inicio</strong> y luego <strong>Agregar</strong>.</li></ol>`
+    : `<ol class="pasos">
+            <li>Abre esta página en <strong>Chrome</strong> o <strong>Edge</strong>.</li>
+            <li>En computadora: haz clic en el ícono de instalar al final de la barra de direcciones, o en el menú ⋮ busca <strong>Instalar</strong>.</li>
+            <li>En Android: abre el menú ⋮ y elige <strong>Instalar app</strong> o <strong>Agregar a pantalla principal</strong>.</li></ol>`}
+        <p class="suave">La app queda con el ícono de MBA 1C y se abre en su propia ventana, sin barra del navegador. Se entra con el mismo usuario y contraseña.</p>
+        <div class="acciones"><button type="button" class="primario" data-cerrar>Entendido</button></div>`);
+    });
+  });
+}
+
 // ---------- estado y navegación ----------
 const estado = { yo: null, usuarios: [] };
 const esAdmin = () => estado.yo && estado.yo.rol === 'admin';
@@ -124,8 +156,10 @@ function mostrarAcceso(empresa) {
         <div class="campo"><label for="l-p">Contraseña</label><input id="l-p" name="password" type="password" autocomplete="current-password" required></div>
         <div class="error"></div>
         <button class="primario" type="submit">Entrar</button>
+        <button type="button" class="boton-instalar" hidden>Descargar la app</button>
       </form>
     </main>`;
+  activarInstalar();
   alEnviar($('#f-login'), async (d) => { await api('/api/login', { method: 'POST', body: d }); location.hash = '#/panel'; location.reload(); });
   $('#l-u').focus();
 }
@@ -184,6 +218,7 @@ function montarLayout() {
         <div class="marca">${esc(yo.empresa)}<small>Control interno</small></div>
         ${enlaces}
         <div class="pie"><strong>${esc(yo.nombre)}</strong>${yo.rol === 'admin' ? 'Administrador' : 'Colaborador'}
+          <button type="button" class="boton-instalar" hidden>Descargar la app</button>
           <button id="b-salir">Cerrar sesión</button></div>
       </nav>
       <main class="contenido">
@@ -191,6 +226,7 @@ function montarLayout() {
         <div id="vista"></div>
       </main>
     </div>`;
+  activarInstalar();
   $('#b-salir').addEventListener('click', async () => { await api('/api/logout', { method: 'POST' }); location.hash = ''; location.reload(); });
   $('#b-menu').addEventListener('click', () => $('#lateral').classList.toggle('abierto'));
 }

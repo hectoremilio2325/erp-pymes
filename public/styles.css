@@ -182,3 +182,10 @@ a.cifra:hover { border-color: var(--primario); }
 .cifras.cifras-6 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 @media (min-width: 1200px) { .cifras.cifras-6 { grid-template-columns: repeat(6, 1fr); } }
 @media print { .cifras.cifras-6 { grid-template-columns: repeat(6, 1fr); } }
+
+/* Instalar app */
+.boton-instalar[hidden] { display: none !important; }
+.acceso .boton-instalar { width: 100%; margin-top: .5rem; }
+.lateral .pie .boton-instalar { background: #b0102f; border-color: #b0102f; color: #fff; }
+.lateral .pie .boton-instalar:hover { background: #8e0c26; }
+ol.pasos { padding-left: 1.2rem; line-height: 1.6; }

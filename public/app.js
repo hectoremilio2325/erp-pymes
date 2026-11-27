@@ -89,7 +89,7 @@ const RUTAS = {
   bitacora: { titulo: 'Bitácora de horas', fn: vistaBitacora },
   calendario: { titulo: 'Calendario', fn: vistaCalendario },
   incidencias: { titulo: 'Incidencias', fn: vistaIncidencias },
-  directorio: { titulo: 'Directorio', fn: vistaDirectorio },
+  directorio: { titulo: 'Directorio', fn: vistaDirectorio, admin: true },
   perfil: { titulo: 'Mi perfil', fn: vistaPerfil },
   configuracion: { titulo: 'Configuración', fn: vistaConfiguracion, admin: true },
 };

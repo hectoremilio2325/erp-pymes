@@ -53,9 +53,9 @@ async function escenario(base, hashDe) {
 
   // Empleado no puede crear usuarios
   assert.equal((await ana('POST', '/api/users', { nombre: 'X', username: 'xx1' })).status, 403);
-  // Directorio de empleado sin datos de rol/usuario
-  const dir = (await ana('GET', '/api/users')).data;
-  assert.ok(dir.length === 3 && dir[0].username === undefined);
+  // El directorio de colaboradores solo lo ve el administrador
+  assert.equal((await ana('GET', '/api/users')).status, 403);
+  assert.equal((await admin('GET', '/api/users')).data.length, 3);
 
   // Tarea asignada a Ana
   const t1 = (await admin('POST', '/api/tasks', { titulo: 'Reporte mensual', responsables: [a.data.id], prioridad: 'alta', fecha_limite: '2020-01-01' })).data.id;

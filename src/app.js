@@ -109,12 +109,10 @@ app.post('/api/me/password', auth.requireAuth, async (req, res) => {
 });
 
 // ---------- usuarios / directorio ----------
-app.get('/api/users', auth.requireAuth, async (req, res) => {
-  const cols = isAdmin(req)
-    ? 'id, username, nombre, rol, puesto, departamento, email, telefono, fecha_ingreso, cumpleanos, activo'
-    : 'id, nombre, puesto, departamento, email, telefono, fecha_ingreso, cumpleanos';
-  const where = isAdmin(req) ? '' : 'WHERE activo = 1';
-  res.json(await db.all(`SELECT ${cols} FROM users ${where} ORDER BY activo DESC, nombre`));
+// El directorio de colaboradores solo lo ve el administrador
+app.get('/api/users', auth.requireAdmin, async (_req, res) => {
+  res.json(await db.all(`SELECT id, username, nombre, rol, puesto, departamento, email, telefono, fecha_ingreso, cumpleanos, activo
+    FROM users ORDER BY activo DESC, nombre`));
 });
 
 function userFields(b) {
